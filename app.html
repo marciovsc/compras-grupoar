@@ -777,7 +777,7 @@ function renderTabelaItens(peds,showToolbar){
       <td><input type="text" value="${r.med}" onchange="updItemMed('${r.itemId}',this.value)" style="width:52px;padding:3px 4px;font-size:12px;background:transparent;border:none;border-bottom:1px solid transparent;color:var(--c-dim);font-family:inherit;text-align:center" onfocus="this.style.borderColor='var(--c-accent)'" onblur="this.style.borderColor='transparent'" title="Clique para editar a medida"></td>
       <td class="r"><input type="number" min="0" step="0.01" value="${r.valor}" onchange="updItemValor('${r.itemId}','${r.pedId}',this.value)" style="width:80px;padding:3px 6px;font-size:12px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--ar-border2);color:var(--ar-white);font-family:inherit" onfocus="this.style.borderColor='var(--ar-accent)'" onblur="this.style.borderColor='var(--ar-border2)'"></td>
       <td class="r"><input type="number" min="0" step="0.5" value="${r.qtd||''}" onchange="updItemQtd('${r.itemId}','${r.pedId}',this.value)" style="width:60px;padding:3px 6px;font-size:12px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--ar-border2);color:var(--ar-white);font-family:inherit" onfocus="this.style.borderColor='var(--ar-accent)'" onblur="this.style.borderColor='var(--ar-border2)'"></td>
-      <td class="forn" style="max-width:150px"><input type="text" value="${r.forn}" onchange="updItemForn('${r.itemId}','${r.pedId}',this.value)" style="width:100%;padding:3px 4px;font-size:13px;background:transparent;border:none;border-bottom:1px solid transparent;color:var(--c-accent);font-family:inherit;font-weight:500" onfocus="this.style.borderColor='var(--c-accent)'" onblur="this.style.borderColor='transparent'" title="Clique para editar o fornecedor"></td>
+      <td class="forn" style="max-width:150px;display:flex;align-items:center;gap:2px"><input type="text" value="${r.forn}" onchange="updItemForn('${r.itemId}','${r.pedId}',this.value)" style="flex:1;min-width:0;padding:3px 4px;font-size:13px;background:transparent;border:none;border-bottom:1px solid transparent;color:var(--c-accent);font-family:inherit;font-weight:500" onfocus="this.style.borderColor='var(--c-accent)'" onblur="this.style.borderColor='transparent'" title="Clique para editar o fornecedor"><i class="ti ti-note" onclick="event.stopPropagation();abrirDescricaoPedido('${r.pedId}','pedidos')" style="cursor:pointer;color:var(--c-dim2);font-size:14px;flex-shrink:0" title="Ver/editar descrição do pedido"></i></td>
       <td><select onchange="updItemSetor('${r.itemId}',this.value)" style="padding:3px 4px;font-size:11px;background:transparent;border:none;color:var(--c-text);font-family:inherit">
         <option value=""${!r.setor?' selected':''}>—</option>
         ${SETORES.map(s=>`<option value="${s}"${r.setor===s?' selected':''}>${s}</option>`).join('')}
@@ -884,6 +884,37 @@ async function updItemForn(itemId, pedId, val){
     await supa.from('pedidos').update({titulo:forns[0]}).eq('id',pedId);
     C.pedidos=C.pedidos.map(p=>p.id===pedId?{...p,titulo:forns[0]}:p);
   }
+}
+
+function abrirDescricaoPedido(pedId,tabela){
+  const arr=tabela==='pedidos_limpeza'?C.pedidos_limpeza:C.pedidos;
+  const ped=arr.find(p=>p.id===pedId);
+  if(!ped){toast('Pedido não encontrado');return;}
+  showModal(
+    '<div style="font-size:16px;font-weight:700;color:var(--c-text);margin-bottom:4px;display:flex;align-items:center;gap:8px">'
+    +'<i class="ti ti-note" style="color:var(--c-accent);font-size:18px"></i> Descrição do pedido'
+    +'</div>'
+    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+(ped.titulo||ped.fornecedor||'—')+'</div>'
+    +'<div class="field" style="margin-bottom:16px">'
+    +'<textarea id="desc-ped-txt" placeholder="Observações sobre este pedido..." style="width:100%;min-height:90px;resize:vertical">'+(ped.observacao||'')+'</textarea>'
+    +'</div>'
+    +'<div class="g8" style="justify-content:flex-end">'
+    +'<button class="btn" onclick="closeModal()">Cancelar</button>'
+    +'<button class="btn btn-acc" onclick="salvarDescricaoPedido(\''+pedId+'\',\''+tabela+'\')"><i class="ti ti-check"></i> Salvar</button>'
+    +'</div>'
+  );
+}
+
+async function salvarDescricaoPedido(pedId,tabela){
+  const texto=document.getElementById('desc-ped-txt')?.value.trim()||null;
+  await supa.from(tabela).update({observacao:texto}).eq('id',pedId);
+  if(tabela==='pedidos_limpeza'){
+    C.pedidos_limpeza=C.pedidos_limpeza.map(p=>p.id===pedId?{...p,observacao:texto}:p);
+  } else {
+    C.pedidos=C.pedidos.map(p=>p.id===pedId?{...p,observacao:texto}:p);
+  }
+  toast('Descrição salva!');
+  closeModal();
 }
 
 async function updItemNome(itemId, val){
@@ -1178,6 +1209,7 @@ function openNovoPedido(semId){
       <div class="field"><label>Fornecedor / Título</label><input id="np-t" type="text" placeholder="Ex: Frigorifico Norte" style="width:100%"></div>
       <div class="field"><label>Data</label><input id="np-d" type="date" style="width:100%"></div>
     </div>
+    <div class="field" style="margin-bottom:12px"><label>Descrição (opcional)</label><textarea id="np-obs" placeholder="Observações sobre este pedido..." style="width:100%;min-height:50px;resize:vertical"></textarea></div>
     <div class="field">
       <label>Categoria</label>
       <div id="np-pills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${pills}</div>
@@ -1186,6 +1218,7 @@ function openNovoPedido(semId){
       <div class="prod-list" id="np-list"></div>
     </div>
     <div id="np-sel"></div>
+    <div id="np-total" style="display:flex;justify-content:flex-end;align-items:center;gap:10px;border-top:1px solid var(--c-border);padding-top:12px;margin-top:12px"></div>
     <div class="g8" style="justify-content:flex-end;margin-top:12px">
       <button class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-acc" onclick="criarPedido()"><i class="ti ti-check"></i> Criar pedido</button>
@@ -1233,7 +1266,7 @@ function renderNpSel(){
   console.log('renderNpSel: hist=',C.historico_precos?.length,'ids=',Object.keys(ncSel));
   const ids=Object.keys(ncSel);
   const el=document.getElementById('np-sel');
-  if(!ids.length){el.innerHTML='';return}
+  if(!ids.length){el.innerHTML='';const t=document.getElementById('np-total');if(t)t.innerHTML='';return}
   el.innerHTML='<div class="sep"></div>'
     +'<div class="slbl">Itens selecionados ('+ids.length+')</div>'
     +'<div style="overflow-x:auto"><table>'
@@ -1265,12 +1298,21 @@ function renderNpSel(){
         +'<td><span style="cursor:pointer;color:var(--c-red)" onclick="remNp(\''+id+'\')">&#x2715;</span></td>'
         +'</tr>';
     }).join('')+'</tbody></table></div>';
+  updateNpTotal();
+}
+
+function updateNpTotal(){
+  const t=document.getElementById('np-total');
+  if(!t)return;
+  const ids=Object.keys(ncSel);
+  const total=ids.reduce((s,id)=>{const p=ncSel[id];return s+(parseFloat(p.qty)||0)*(parseFloat(p.valor)||0);},0);
+  t.innerHTML=ids.length?'<span style="font-size:12px;font-weight:600;color:var(--c-dim);text-transform:uppercase;letter-spacing:0.04em">Total do pedido</span><span style="font-size:20px;font-weight:700;color:var(--c-accent)">'+fmtNum(total)+'</span>':'';
 }
 
 function updNpSetor(el,id){if(ncSel[id])ncSel[id].setor=el.value;}
 
-function updNpQty(el,id){if(ncSel[id])ncSel[id].qty=el.value;}
-function updNpValor(el,id){if(ncSel[id])ncSel[id].valor=el.value;}
+function updNpQty(el,id){if(ncSel[id])ncSel[id].qty=el.value;updateNpTotal();}
+function updNpValor(el,id){if(ncSel[id])ncSel[id].valor=el.value;updateNpTotal();}
 function updNpPrevisao(el,id){if(ncSel[id])ncSel[id].previsao=el.value;}
 function remNp(id){remP(id);}
 
@@ -1282,11 +1324,12 @@ function remP(id){
 async function criarPedido(){
   const titulo=document.getElementById('np-t').value.trim()||'Pedido sem título';
   const data=document.getElementById('np-d').value||new Date().toISOString().slice(0,10);
+  const observacao=document.getElementById('np-obs')?.value.trim()||null;
   const ids=Object.keys(ncSel);
   if(!ids.length){alert('Selecione ao menos um produto.');return}
   const total=ids.reduce((s,id)=>{const p=ncSel[id];return s+(parseFloat(p.qty)||0)*(parseFloat(p.valor)||0)},0);
   const {data:ped,error}=await supa.from('pedidos').insert({
-    restaurante_id:restAtivo,semana_id:pedSemId,titulo,data,status:'Aguardando',total
+    restaurante_id:restAtivo,semana_id:pedSemId,titulo,data,status:'Aguardando',total,observacao
   }).select().single();
   if(error){toast('Erro ao criar pedido');return}
   const {data:itensInseridos}=await supa.from('pedido_itens').insert(ids.map(id=>{
@@ -3097,7 +3140,7 @@ function renderLimpezaSemana2(mesKey){
           const pedId=it.pedido_id||'';
           html+='<tr data-itemid="'+it.id+'" data-pedid="'+pedId+'" class="lim-item-row">';
           html+='<td class="cat">'+(it.categoria||'—')+'</td>';
-          html+='<td><input type="text" value="'+it.produto.replace(/"/g,'&quot;')+ '" class="lim-nome-inp" style="width:100%;padding:2px 4px;font-size:13px;background:transparent;border:none;border-bottom:1px solid transparent;font-family:inherit"></td>';
+          html+='<td style="display:flex;align-items:center;gap:2px"><input type="text" value="'+it.produto.replace(/"/g,'&quot;')+ '" class="lim-nome-inp" style="flex:1;min-width:0;padding:2px 4px;font-size:13px;background:transparent;border:none;border-bottom:1px solid transparent;font-family:inherit"><i class="ti ti-note" onclick="event.stopPropagation();abrirDescricaoPedido(\''+pedId+'\',\'pedidos_limpeza\')" style="cursor:pointer;color:var(--c-dim2);font-size:14px;flex-shrink:0" title="Ver/editar descrição do pedido"></i></td>';
           html+='<td style="text-align:center">'+(it.unidade||'UN')+'</td>';
           html+='<td class="r"><input type="number" min="0" step="0.01" value="'+(it.quantidade||'')+'" class="lim-qty-inp" style="width:65px;padding:3px 6px;font-size:12px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--c-border2);font-family:inherit"></td>';
           html+='<td class="r"><input type="number" min="0" step="0.01" value="'+(it.valor_unit||'')+'" class="lim-val-inp" style="width:80px;padding:3px 6px;font-size:12px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--c-border2);font-family:inherit"></td>';
@@ -3240,19 +3283,21 @@ function toggleLimSem(id){
 }
 
 function openNovoPedidoLimpeza(semId){
-  const sem=C.semanas.find(s=>s.id===semId);
+  const sem=C.semanas_limpeza.find(s=>s.id===semId);
 
   showModal(
     '<div style="font-size:16px;font-weight:700;color:var(--c-text);margin-bottom:4px"><i class="ti ti-droplet" style="color:var(--c-accent)"></i> Novo Pedido de Limpeza</div>'
-    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+(sem?.nome||'')+'</div>'
+    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+(sem?semLabel(sem):'')+'</div>'
     +'<div class="grid2f" style="margin-bottom:12px">'
     +'<div class="field"><label>Fornecedor</label><input id="lim-forn" type="text" placeholder="Ex: Amplamax"></div>'
     +'<div class="field"><label>Data da solicitação</label><input id="lim-data" type="date" value="'+new Date().toISOString().slice(0,10)+'"></div>'
     +'</div>'
+    +'<div class="field" style="margin-bottom:12px"><label>Descrição (opcional)</label><textarea id="lim-obs" placeholder="Observações sobre este pedido..." style="width:100%;min-height:50px;resize:vertical"></textarea></div>'
     +'<div class="field" style="margin-bottom:8px"><label>Buscar produto</label>'
     +'<input id="lim-search" type="text" placeholder="Digite para filtrar..." oninput="filtrarLimProd()"></div>'
     +'<div class="prod-list" id="lim-list"></div>'
     +'<div id="lim-sel" style="margin-top:12px"></div>'
+    +'<div id="lim-total" style="display:flex;justify-content:flex-end;align-items:center;gap:10px;border-top:1px solid var(--c-border);padding-top:12px;margin-top:12px"></div>'
     +'<div class="g8" style="justify-content:flex-end;margin-top:14px">'
     +'<button class="btn btn-acc" id="lim-criar-btn"><i class="ti ti-check"></i> Criar pedido</button>'
     +'</div>'
@@ -3305,7 +3350,7 @@ function toggleLimProd(id,nome,un,cat){
 function renderLimSel(){
   const ids=Object.keys(limSel);
   const el=document.getElementById('lim-sel');
-  if(!el||!ids.length){if(el)el.innerHTML='';return;}
+  if(!el||!ids.length){if(el)el.innerHTML='';const t=document.getElementById('lim-total');if(t)t.innerHTML='';return;}
   el.innerHTML='<hr style="margin:8px 0;border:none;border-top:1px solid var(--c-border)">'
     +'<div class="slbl" style="margin-bottom:6px">Itens selecionados ('+ids.length+')</div>'
     +'<table style="width:100%"><thead><tr><th>Produto</th><th>Qtd</th><th>Valor unit.</th><th>Previsão entrega</th><th></th></tr></thead><tbody>'
@@ -3346,10 +3391,19 @@ function renderLimSel(){
       if(rem)rem.addEventListener('click',()=>remLimP(id));
     });
   },50);
+  updateLimNpTotal();
 }
 
-function updLimNpQty(el,id){if(limSel[id])limSel[id].qty=el.value;}
-function updLimNpValor(el,id){if(limSel[id])limSel[id].valor=el.value;}
+function updateLimNpTotal(){
+  const t=document.getElementById('lim-total');
+  if(!t)return;
+  const ids=Object.keys(limSel);
+  const total=ids.reduce((s,id)=>{const p=limSel[id];return s+(parseFloat(p.qty)||0)*(parseFloat(p.valor)||0);},0);
+  t.innerHTML=ids.length?'<span style="font-size:12px;font-weight:600;color:var(--c-dim);text-transform:uppercase;letter-spacing:0.04em">Total do pedido</span><span style="font-size:20px;font-weight:700;color:var(--c-accent)">'+fmtNum(total)+'</span>':'';
+}
+
+function updLimNpQty(el,id){if(limSel[id])limSel[id].qty=el.value;updateLimNpTotal();}
+function updLimNpValor(el,id){if(limSel[id])limSel[id].valor=el.value;updateLimNpTotal();}
 function updLimNpPrevisao(el,id){if(limSel[id])limSel[id].previsao=el.value;}
 function remLimP(id){delete limSel[id];filtrarLimProd();}
 
@@ -3358,6 +3412,7 @@ async function criarPedidoLimpeza(semId){
   if(criarBtn?.disabled)return;
   const forn=document.getElementById('lim-forn')?.value.trim();
   const data=document.getElementById('lim-data')?.value;
+  const observacao=document.getElementById('lim-obs')?.value.trim()||null;
   const ids=Object.keys(limSel);
   if(!forn){toast('Informe o fornecedor');return;}
   if(!ids.length){toast('Selecione ao menos um produto');return;}
@@ -3366,7 +3421,7 @@ async function criarPedidoLimpeza(semId){
   const total=ids.reduce((s,id)=>{const p=limSel[id];return s+(parseFloat(p.qty)||0)*(parseFloat(p.valor)||0);},0);
 
   const {data:ped,error}=await supa.from('pedidos_limpeza').insert({
-    semana_id:semId,fornecedor:forn,data,status:'Aguardando',total
+    semana_id:semId,fornecedor:forn,data,status:'Aguardando',total,observacao
   }).select().single();
   if(error){toast('Erro ao criar pedido: '+error.message);if(criarBtn)criarBtn.disabled=false;return;}
 
