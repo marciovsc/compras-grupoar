@@ -1634,7 +1634,7 @@ function _gerarEspelhoGeral(statusFiltro, restFiltro, semFiltro){
   rows.forEach(r=>{
     if(r.forn!==lastForn){
       lastForn=r.forn;
-      tbody+='<tr style="background:#18181A"><td colspan="12" style="padding:7px 12px"><span style="color:#999;font-size:9px;font-weight:600;letter-spacing:0.05em;margin-right:8px">FORNECEDOR</span><span style="color:#EF9F27;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em">'+r.forn+'</span></td></tr>';
+      tbody+='<tr style="background:#18181A;page-break-after:avoid;page-break-inside:avoid"><td colspan="12" style="padding:7px 12px"><span style="color:#999;font-size:9px;font-weight:600;letter-spacing:0.05em;margin-right:8px">FORNECEDOR</span><span style="color:#EF9F27;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em">'+r.forn+'</span></td></tr>';
     }
     const sub=r.valor*r.qty;
     const bg=n++%2?'#fff':'#f9f9f9';
@@ -1670,7 +1670,7 @@ function _gerarEspelhoGeral(statusFiltro, restFiltro, semFiltro){
     +'.tfl{text-align:right;font-size:11px;color:#FAC775;font-weight:400}'
     +'.sig{display:flex;justify-content:space-between;margin-top:40px}'
     +'.s{border-top:1.5px solid #222;width:180px;text-align:center;padding-top:4px;font-size:11px;color:#666}'
-    +'@media print{@page{margin:8mm;size:A4 landscape}body{padding:0}}'
+    +'@media print{@page{margin:8mm;size:A4 landscape}body{padding:0}thead{display:table-header-group}tr{page-break-inside:avoid}}'
     +'</style></head><body>'
     +'<div class="hdr"><div><h1>Espelho Geral de Recebimento</h1><p>Grupo AR — '+rests+' — Status: '+statusFiltro.join(', ')+'</p></div>'
     +'<div class="logo"><img src="'+logo_data+'" style="width:40px;height:40px;object-fit:contain"></div>'
@@ -1732,7 +1732,7 @@ function gerarEspelho(semId){
   rows.forEach(r=>{
     if(r.forn!==lastForn){
       lastForn=r.forn;
-      tbody+='<tr style="background:#18181A"><td colspan="10" style="padding:7px 12px"><span style="color:#999;font-size:9px;font-weight:600;letter-spacing:0.05em;margin-right:8px">FORNECEDOR</span><span style="color:#EF9F27;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em">'+r.forn+'</span></td></tr>';
+      tbody+='<tr style="background:#18181A;page-break-after:avoid;page-break-inside:avoid"><td colspan="10" style="padding:7px 12px"><span style="color:#999;font-size:9px;font-weight:600;letter-spacing:0.05em;margin-right:8px">FORNECEDOR</span><span style="color:#EF9F27;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em">'+r.forn+'</span></td></tr>';
     }
     const sub=r.valor*r.qty;
     const bg=n++%2?'#fff':'#f9f9f9';
@@ -1764,7 +1764,7 @@ function gerarEspelho(semId){
     +'.tfl{text-align:right;font-size:11px;color:#FAC775;font-weight:400}'
     +'.sig{display:flex;justify-content:space-between;margin-top:40px}'
     +'.s{border-top:1.5px solid #222;width:200px;text-align:center;padding-top:4px;font-size:11px;color:#666}'
-    +'@media print{@page{margin:8mm;size:A4 landscape}body{padding:0}}'
+    +'@media print{@page{margin:8mm;size:A4 landscape}body{padding:0}thead{display:table-header-group}tr{page-break-inside:avoid}}'
     +'</style></head><body>'
     +'<div class="hdr"><div><h1>Espelho de Recebimento</h1><p>Grupo AR — '+semLabel(sem)+'</p></div>'
     +'<div class="logo"><img src="'+logo_data+'" style="width:40px;height:40px;object-fit:contain"></div>'
@@ -1821,7 +1821,7 @@ function gerarEspelhoLimpeza(semId){
   rows.forEach(r=>{
     if(r.forn!==lastForn){
       lastForn=r.forn;
-      tbody+='<tr style="background:#18181A"><td colspan="8" style="padding:7px 12px"><span style="color:#999;font-size:9px;font-weight:600;letter-spacing:0.05em;margin-right:8px">FORNECEDOR</span><span style="color:#EF9F27;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em">'+r.forn+'</span></td></tr>';
+      tbody+='<tr style="background:#18181A;page-break-after:avoid;page-break-inside:avoid"><td colspan="8" style="padding:7px 12px"><span style="color:#999;font-size:9px;font-weight:600;letter-spacing:0.05em;margin-right:8px">FORNECEDOR</span><span style="color:#EF9F27;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em">'+r.forn+'</span></td></tr>';
     }
     const sub=r.valor*r.qty;
     const bg=n++%2?'#fff':'#f9f9f9';
@@ -1851,7 +1851,7 @@ function gerarEspelhoLimpeza(semId){
     +'.tfl{text-align:right;font-size:11px;color:#FAC775;font-weight:400}'
     +'.sig{display:flex;justify-content:space-between;margin-top:40px}'
     +'.s{border-top:1.5px solid #222;width:200px;text-align:center;padding-top:4px;font-size:11px;color:#666}'
-    +'@media print{@page{margin:8mm;size:A4 landscape}body{padding:0}}'
+    +'@media print{@page{margin:8mm;size:A4 landscape}body{padding:0}thead{display:table-header-group}tr{page-break-inside:avoid}}'
     +'</style></head><body>'
     +'<div class="hdr"><div><h1>Espelho de Recebimento — Material de Limpeza</h1><p>Grupo AR — '+semLabel(sem)+'</p></div>'
     +'<div class="logo"><img src="'+logo_data+'" style="width:40px;height:40px;object-fit:contain"></div>'
