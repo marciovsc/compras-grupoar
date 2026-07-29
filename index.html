@@ -1351,6 +1351,7 @@ async function criarPedido(){
     if(histRows.length)await supa.from('historico_precos').insert(histRows);
   }
   toast('Pedido criado!');closeModal();await reloadAll();renderPedidos();
+  gerarPDF(ped.id);
 }
 async function delPedido(id){
   if(!confirm('Remover este pedido?'))return;
@@ -3460,6 +3461,7 @@ async function criarPedidoLimpeza(semId){
   C.itens_limpeza=h4.data||[];
   const mesKey=document.getElementById('area-limpeza').dataset.meskey||'';
   if(mesKey)renderLimpezaSemana2(mesKey);
+  gerarPedidoLimpezaPDF(semId,forn);
 }
 
 async function updLimItemNome(id,val){
