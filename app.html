@@ -1421,7 +1421,12 @@ function buildHTML(itemId,statusFiltro){
   // semana com esse fornecedor, não importa a categoria nem o pedido de origem.
   const pedsSemana=C.pedidos.filter(p=>p.semana_id===pedOrigem.semana_id);
   const pedIdsSemana=new Set(pedsSemana.map(p=>p.id));
-  const itsAll=C.itens.filter(i=>pedIdsSemana.has(i.pedido_id)&&i.fornecedor===fornecedorAlvo&&statusFiltro.includes(i.status||'Aguardando'));
+  const norm=s=>(s||'').trim().toLowerCase();
+  const itsAll=C.itens.filter(i=>pedIdsSemana.has(i.pedido_id)&&norm(i.fornecedor)===norm(fornecedorAlvo)&&statusFiltro.includes(i.status||'Aguardando'));
+  if(!itsAll.length){
+    toast('Nenhum item encontrado para "'+fornecedorAlvo+'" com os status selecionados');
+    return{ped:{titulo:fornecedorAlvo},html:null,total:0};
+  }
   const total=itsAll.reduce((s,i)=>s+(parseFloat(i.quantidade)||0)*(parseFloat(i.valor_unit)||0),0);
 
   // Só considera, para observação/local/data, os pedidos que realmente têm algum item desse fornecedor
@@ -1512,10 +1517,12 @@ function buildHTML(itemId,statusFiltro){
 }
 function gerarPDF(itemId,statusFiltro){
   const{html}=buildHTML(itemId,statusFiltro);
+  if(!html)return;
   const w=window.open('','_blank');w.document.write(html);w.document.close();
 }
 function gerarImagem(itemId){
   const{html,ped}=buildHTML(itemId);
+  if(!html)return;
   toast('Gerando imagem...');
   const iframe=document.createElement('iframe');
   iframe.style.cssText='position:fixed;top:-9999px;left:-9999px;width:800px;height:1px;border:none;visibility:hidden';
