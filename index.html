@@ -876,18 +876,9 @@ async function delItem(itemId, pedId){
 async function updItemForn(itemId, pedId, val){
   const v=val.trim();
   if(!v)return;
-  const {error:e1}=await supa.from('pedido_itens').update({fornecedor:v}).eq('id',itemId);
-  if(e1){toast('Erro ao salvar fornecedor do item: '+e1.message);return;}
+  const {error}=await supa.from('pedido_itens').update({fornecedor:v}).eq('id',itemId);
+  if(error){toast('Erro ao salvar fornecedor do item: '+error.message);return;}
   C.itens=C.itens.map(i=>i.id===itemId?{...i,fornecedor:v}:i);
-  // Propaga o novo fornecedor para todos os itens do mesmo pedido e para o título do pedido,
-  // garantindo que a filtragem do recibo (por título) sempre bata com o fornecedor atual.
-  const {error:e2}=await supa.from('pedido_itens').update({fornecedor:v}).eq('pedido_id',pedId);
-  if(e2){toast('Erro ao propagar fornecedor para os itens do pedido: '+e2.message);return;}
-  C.itens=C.itens.map(i=>i.pedido_id===pedId?{...i,fornecedor:v}:i);
-  const {error:e3}=await supa.from('pedidos').update({titulo:v}).eq('id',pedId);
-  if(e3){toast('Erro ao atualizar título do pedido: '+e3.message);return;}
-  C.pedidos=C.pedidos.map(p=>p.id===pedId?{...p,titulo:v}:p);
-  toast('Fornecedor atualizado!');
 }
 
 function abrirDescricaoPedido(pedId,tabela){
