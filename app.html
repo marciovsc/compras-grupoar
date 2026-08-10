@@ -878,13 +878,12 @@ async function updItemForn(itemId, pedId, val){
   if(!v)return;
   await supa.from('pedido_itens').update({fornecedor:v}).eq('id',itemId);
   C.itens=C.itens.map(i=>i.id===itemId?{...i,fornecedor:v}:i);
-  // Atualizar também o título do pedido se todos os itens são do mesmo fornecedor
-  const itsPed=C.itens.filter(i=>i.pedido_id===pedId);
-  const forns=[...new Set(itsPed.map(i=>i.fornecedor).filter(Boolean))];
-  if(forns.length===1){
-    await supa.from('pedidos').update({titulo:forns[0]}).eq('id',pedId);
-    C.pedidos=C.pedidos.map(p=>p.id===pedId?{...p,titulo:forns[0]}:p);
-  }
+  // Propaga o novo fornecedor para todos os itens do mesmo pedido e para o título do pedido,
+  // garantindo que a filtragem do recibo (por título) sempre bata com o fornecedor atual.
+  await supa.from('pedido_itens').update({fornecedor:v}).eq('pedido_id',pedId);
+  C.itens=C.itens.map(i=>i.pedido_id===pedId?{...i,fornecedor:v}:i);
+  await supa.from('pedidos').update({titulo:v}).eq('id',pedId);
+  C.pedidos=C.pedidos.map(p=>p.id===pedId?{...p,titulo:v}:p);
 }
 
 function abrirDescricaoPedido(pedId,tabela){
@@ -1104,10 +1103,23 @@ function irParaPedido(){
 }
 
 
+function voltarAoPedido(forn,data,local,obs,filtro){
+  openNovoPedido(pedSemId,true);
+  setTimeout(()=>{
+    if(forn)document.getElementById('np-t').value=forn;
+    if(data)document.getElementById('np-d').value=data;
+    if(local)document.getElementById('np-local').value=local;
+    if(obs)document.getElementById('np-obs').value=obs;
+    if(filtro){document.getElementById('np-s').value=filtro;filtrarNp();}
+  },100);
+}
+
 function abrirModalNovoProduto(){
   // Salvar estado atual do modal de pedido
   const fornAtual=document.getElementById('np-t')?.value||'';
   const dataAtual=document.getElementById('np-d')?.value||'';
+  const localAtual=document.getElementById('np-local')?.value||'';
+  const obsAtual=document.getElementById('np-obs')?.value||'';
 
   const catsOpts=C.categorias.map(c=>`<option value="${c.nome}"${c.nome===ncCat?' selected':''}>${c.nome}</option>`).join('');
 
@@ -1142,15 +1154,15 @@ function abrirModalNovoProduto(){
       <select id="prd-cat" style="width:100%">${catsOpts}</select>
     </div>
     <div class="g8" style="justify-content:flex-end">
-      <button class="btn" onclick="openNovoPedido(pedSemId)">Voltar ao pedido</button>
-      <button class="btn btn-acc" onclick="salvarNovoProduto('${fornAtual}','${dataAtual}')">
+      <button class="btn" onclick="voltarAoPedido('${fornAtual.replace(/'/g,"\\'")}','${dataAtual}','${localAtual.replace(/'/g,"\\'")}','${obsAtual.replace(/'/g,"\\'")}')">Voltar ao pedido</button>
+      <button class="btn btn-acc" onclick="salvarNovoProduto('${fornAtual.replace(/'/g,"\\'")}','${dataAtual}','${localAtual.replace(/'/g,"\\'")}','${obsAtual.replace(/'/g,"\\'")}')">
         <i class="ti ti-check"></i> Salvar produto
       </button>
     </div>
   `);
 }
 
-async function salvarNovoProduto(fornAtual, dataAtual){
+async function salvarNovoProduto(fornAtual, dataAtual, localAtual, obsAtual){
   const nome=document.getElementById('prd-nome')?.value.trim();
   const unidade=document.getElementById('prd-unidade')?.value||'KG';
   const categoria=document.getElementById('prd-cat')?.value;
@@ -1163,13 +1175,7 @@ async function salvarNovoProduto(fornAtual, dataAtual){
   if(existe){
     toast('Produto já cadastrado!');
     ncCat=categoria;
-    openNovoPedido(pedSemId);
-    setTimeout(()=>{
-      if(fornAtual)document.getElementById('np-t').value=fornAtual;
-      if(dataAtual)document.getElementById('np-d').value=dataAtual;
-      document.getElementById('np-s').value=nome;
-      filtrarNp();
-    },100);
+    voltarAoPedido(fornAtual,dataAtual,localAtual,obsAtual,nome);
     return;
   }
 
@@ -1184,17 +1190,13 @@ async function salvarNovoProduto(fornAtual, dataAtual){
 
   // Voltar ao modal de pedido com o produto já filtrado
   ncCat=categoria;
-  openNovoPedido(pedSemId);
-  setTimeout(()=>{
-    if(fornAtual)document.getElementById('np-t').value=fornAtual;
-    if(dataAtual)document.getElementById('np-d').value=dataAtual;
-    document.getElementById('np-s').value=nome;
-    filtrarNp();
-  },100);
+  voltarAoPedido(fornAtual,dataAtual,localAtual,obsAtual,nome);
 }
 
-function openNovoPedido(semId){
-  pedSemId=semId||null;ncSel={};
+function openNovoPedido(semId,preserve){
+  const mesmoContexto=pedSemId===(semId||null);
+  pedSemId=semId||null;
+  if(!preserve&&!mesmoContexto)ncSel={};
   ncCat=C.categorias[0]?.nome||'';
   const rest=C.restaurantes.find(r=>r.id===restAtivo);
   const sem=semId?C.semanas.find(s=>s.id===semId):null;
@@ -1225,8 +1227,9 @@ function openNovoPedido(semId){
       <button class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-acc" onclick="criarPedido()"><i class="ti ti-check"></i> Criar pedido</button>
     </div>`,{wide:true});
-  document.getElementById('np-d').valueAsDate=new Date();
+  if(!preserve)document.getElementById('np-d').valueAsDate=new Date();
   filtrarNp();
+  renderNpSel();
 }
 
 
