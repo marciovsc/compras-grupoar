@@ -778,7 +778,7 @@ function renderTabelaItens(peds,showToolbar){
       <td><input type="text" value="${r.med}" onchange="updItemMed('${r.itemId}',this.value)" style="width:52px;padding:3px 4px;font-size:12px;background:transparent;border:none;border-bottom:1px solid transparent;color:var(--c-dim);font-family:inherit;text-align:center" onfocus="this.style.borderColor='var(--c-accent)'" onblur="this.style.borderColor='transparent'" title="Clique para editar a medida"></td>
       <td class="r"><input type="number" min="0" step="0.01" value="${r.valor}" onchange="updItemValor('${r.itemId}','${r.pedId}',this.value)" style="width:80px;padding:3px 6px;font-size:12px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--ar-border2);color:var(--ar-white);font-family:inherit" onfocus="this.style.borderColor='var(--ar-accent)'" onblur="this.style.borderColor='var(--ar-border2)'"></td>
       <td class="r"><input type="number" min="0" step="0.5" value="${r.qtd||''}" onchange="updItemQtd('${r.itemId}','${r.pedId}',this.value)" style="width:60px;padding:3px 6px;font-size:12px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--ar-border2);color:var(--ar-white);font-family:inherit" onfocus="this.style.borderColor='var(--ar-accent)'" onblur="this.style.borderColor='var(--ar-border2)'"></td>
-      <td class="forn" style="max-width:150px;display:flex;align-items:center;gap:2px"><input type="text" value="${r.forn}" onchange="updItemForn('${r.itemId}','${r.pedId}',this.value)" style="flex:1;min-width:0;padding:3px 4px;font-size:13px;background:transparent;border:none;border-bottom:1px solid transparent;color:var(--c-accent);font-family:inherit;font-weight:500" onfocus="this.style.borderColor='var(--c-accent)'" onblur="this.style.borderColor='transparent'" title="Clique para editar o fornecedor"><i class="ti ti-note" onclick="event.stopPropagation();abrirDescricaoPedido('${r.pedId}','pedidos')" style="cursor:pointer;color:var(--c-dim2);font-size:14px;flex-shrink:0" title="Ver/editar descrição do pedido"></i><i class="ti ti-file-invoice" onclick="event.stopPropagation();abrirFiltroRecibo('${r.pedId}')" style="cursor:pointer;color:var(--c-dim2);font-size:14px;flex-shrink:0" title="Gerar recibo do pedido para o fornecedor"></i></td>
+      <td class="forn" style="max-width:150px;display:flex;align-items:center;gap:2px"><input type="text" value="${r.forn}" onchange="updItemForn('${r.itemId}','${r.pedId}',this.value)" style="flex:1;min-width:0;padding:3px 4px;font-size:13px;background:transparent;border:none;border-bottom:1px solid transparent;color:var(--c-accent);font-family:inherit;font-weight:500" onfocus="this.style.borderColor='var(--c-accent)'" onblur="this.style.borderColor='transparent'" title="Clique para editar o fornecedor"><i class="ti ti-note" onclick="event.stopPropagation();abrirDescricaoPedido('${r.pedId}','pedidos')" style="cursor:pointer;color:var(--c-dim2);font-size:14px;flex-shrink:0" title="Ver/editar descrição do pedido"></i><i class="ti ti-file-invoice" onclick="event.stopPropagation();abrirFiltroRecibo('${r.itemId}')" style="cursor:pointer;color:var(--c-dim2);font-size:14px;flex-shrink:0" title="Gerar recibo do pedido para o fornecedor"></i></td>
       <td><select onchange="updItemSetor('${r.itemId}',this.value)" style="padding:3px 4px;font-size:11px;background:transparent;border:none;color:var(--c-text);font-family:inherit">
         <option value=""${!r.setor?' selected':''}>—</option>
         ${SETORES.map(s=>`<option value="${s}"${r.setor===s?' selected':''}>${s}</option>`).join('')}
@@ -1360,7 +1360,7 @@ async function criarPedido(){
     if(histRows.length)await supa.from('historico_precos').insert(histRows);
   }
   toast('Pedido criado!');closeModal();await reloadAll();renderPedidos();
-  abrirFiltroRecibo(ped.id);
+  if(itensInseridos&&itensInseridos.length)abrirFiltroRecibo(itensInseridos[0].id);
 }
 async function delPedido(id){
   if(!confirm('Remover este pedido?'))return;
@@ -1378,14 +1378,15 @@ function fmtNum(n){
   return'R$ '+parts[0]+','+parts[1];
 }
 
-function abrirFiltroRecibo(pedId){
-  const ped=C.pedidos.find(p=>p.id===pedId);
-  if(!ped){toast('Pedido não encontrado');return;}
+function abrirFiltroRecibo(itemId){
+  const it=C.itens.find(i=>i.id===itemId);
+  if(!it){toast('Item não encontrado');return;}
+  const fornecedor=it.fornecedor||'—';
   showModal(
     '<div style="font-size:16px;font-weight:700;color:var(--c-text);margin-bottom:4px;display:flex;align-items:center;gap:8px">'
     +'<i class="ti ti-file-invoice" style="color:var(--c-accent);font-size:18px"></i> Gerar recibo'
     +'</div>'
-    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+ped.titulo+'</div>'
+    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+fornecedor+'</div>'
     +'<div class="field" style="margin-bottom:16px">'
     +'<label>Quais itens incluir (por status)?</label>'
     +'<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">'
@@ -1396,32 +1397,39 @@ function abrirFiltroRecibo(pedId){
     +'</div>'
     +'<div class="g8" style="justify-content:flex-end">'
     +'<button class="btn" onclick="closeModal()">Cancelar</button>'
-    +'<button class="btn btn-acc" onclick="confirmarGerarRecibo(\''+pedId+'\')"><i class="ti ti-check"></i> Gerar recibo</button>'
+    +'<button class="btn btn-acc" onclick="confirmarGerarRecibo(\''+itemId+'\')"><i class="ti ti-check"></i> Gerar recibo</button>'
     +'</div>'
   );
 }
 
-function confirmarGerarRecibo(pedId){
+function confirmarGerarRecibo(itemId){
   const statusFiltro=[];
   if(document.getElementById('rc-st-ag')?.checked)statusFiltro.push('Aguardando');
   if(document.getElementById('rc-st-pr')?.checked)statusFiltro.push('Previsto');
   if(document.getElementById('rc-st-en')?.checked)statusFiltro.push('Entregue');
   if(!statusFiltro.length){toast('Selecione ao menos um status');return;}
   closeModal();
-  gerarPDF(pedId,statusFiltro);
+  gerarPDF(itemId,statusFiltro);
 }
 
-function buildHTML(pedId,statusFiltro){
+function buildHTML(itemId,statusFiltro){
   statusFiltro=statusFiltro&&statusFiltro.length?statusFiltro:['Aguardando'];
-  const pedOrigem=C.pedidos.find(x=>x.id===pedId);
-  // Consolida todos os pedidos do mesmo fornecedor (titulo) dentro da mesma semana
-  const pedsForn=C.pedidos.filter(p=>p.semana_id===pedOrigem.semana_id&&p.titulo===pedOrigem.titulo);
-  const pedIds=new Set(pedsForn.map(p=>p.id));
-  const itsAll=C.itens.filter(i=>pedIds.has(i.pedido_id)&&statusFiltro.includes(i.status||'Aguardando'));
+  const itOrigem=C.itens.find(i=>i.id===itemId);
+  const pedOrigem=C.pedidos.find(p=>p.id===itOrigem.pedido_id);
+  const fornecedorAlvo=itOrigem.fornecedor;
+  // Consolida por NOME DO FORNECEDOR — todos os itens de todos os pedidos da mesma
+  // semana com esse fornecedor, não importa a categoria nem o pedido de origem.
+  const pedsSemana=C.pedidos.filter(p=>p.semana_id===pedOrigem.semana_id);
+  const pedIdsSemana=new Set(pedsSemana.map(p=>p.id));
+  const itsAll=C.itens.filter(i=>pedIdsSemana.has(i.pedido_id)&&i.fornecedor===fornecedorAlvo&&statusFiltro.includes(i.status||'Aguardando'));
   const total=itsAll.reduce((s,i)=>s+(parseFloat(i.quantidade)||0)*(parseFloat(i.valor_unit)||0),0);
-  // Observação e local de entrega: pega o primeiro valor não vazio entre os pedidos consolidados
+
+  // Só considera, para observação/local/data, os pedidos que realmente têm algum item desse fornecedor
+  const pedIdsRelevantes=new Set(itsAll.map(i=>i.pedido_id));
+  const pedsForn=pedsSemana.filter(p=>pedIdsRelevantes.has(p.id));
   const observacao=pedsForn.map(p=>p.observacao).find(o=>o&&o.trim())||'';
   const localEntrega=pedsForn.map(p=>p.local_entrega).find(l=>l&&l.trim())||'';
+  const dataPedido=pedsForn.map(p=>p.data).sort().pop()||pedOrigem.data;
 
   // Agrupa por restaurante — cada um vira uma seção separada com nota fiscal própria
   const restIds=[...new Set(pedsForn.map(p=>p.restaurante_id))];
@@ -1458,7 +1466,7 @@ function buildHTML(pedId,statusFiltro){
       +'</table></div>';
   });
 
-  const html='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Pedido — '+pedOrigem.titulo+'</title>'
+  const html='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Pedido — '+fornecedorAlvo+'</title>'
     +'<style>*{box-sizing:border-box}body{font-family:Arial,sans-serif;padding:40px;color:#222;max-width:1150px;margin:0 auto;background:#fff}'
     +'.hr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}'
     +'h1{font-size:20px;font-weight:700;margin:0;color:#18181A}.sub{font-size:13px;color:#888;margin-bottom:24px}'
@@ -1491,8 +1499,8 @@ function buildHTML(pedId,statusFiltro){
     +'<div class="no-print"><button onclick="window.print()" style="background:#18181A;color:#fff">🖨 Imprimir</button><button onclick="window.close()" style="background:#F0F1F5;color:#18181A">✕ Fechar</button></div>'
     +'<div class="hr"><div><h1>Pedido de Compras</h1><div class="sub">Grupo AR — Cozinha de Produção</div></div><div class="logo" style="background:#18181A;padding:4px"><img src="'+logo_data+'" style="width:100%;height:100%;object-fit:contain;filter:invert(1)"></div></div>'
     +'<div class="info">'
-    +'<div class="ii"><strong>Fornecedor</strong><span>'+pedOrigem.titulo.toUpperCase()+'</span></div>'
-    +'<div class="ii"><strong>Data</strong><span>'+fmtD(pedOrigem.data)+'</span></div>'
+    +'<div class="ii"><strong>Fornecedor</strong><span>'+(fornecedorAlvo||'').toUpperCase()+'</span></div>'
+    +'<div class="ii"><strong>Data</strong><span>'+fmtD(dataPedido)+'</span></div>'
     +'<div class="ii"><strong>Total geral</strong><span>'+fmtNum(total)+'</span></div>'
     +'</div>'
     +'<div class="local-block"><label>Local de entrega</label><input type="text" value="'+(localEntrega||'').replace(/"/g,'&quot;')+'" placeholder="Ex: Centro de Distribuição"></div>'
@@ -1500,14 +1508,14 @@ function buildHTML(pedId,statusFiltro){
     +restSections
     +'<div style="background:#18181A;border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;color:#EF9F27;font-weight:700;margin-bottom:8px"><span style="font-size:12px;color:#FAC775;font-weight:400;text-transform:uppercase">Total geral do pedido</span><span style="font-size:17px">'+fmtNum(total)+'</span></div>'
     +'<div class="footer">Grupo AR — Gerado em '+new Date().toLocaleDateString('pt-BR')+'</div></body></html>';
-  return{ped:pedOrigem,html,total};
+  return{ped:{titulo:fornecedorAlvo},html,total};
 }
-function gerarPDF(pedId,statusFiltro){
-  const{html}=buildHTML(pedId,statusFiltro);
+function gerarPDF(itemId,statusFiltro){
+  const{html}=buildHTML(itemId,statusFiltro);
   const w=window.open('','_blank');w.document.write(html);w.document.close();
 }
-function gerarImagem(pedId){
-  const{html,ped}=buildHTML(pedId);
+function gerarImagem(itemId){
+  const{html,ped}=buildHTML(itemId);
   toast('Gerando imagem...');
   const iframe=document.createElement('iframe');
   iframe.style.cssText='position:fixed;top:-9999px;left:-9999px;width:800px;height:1px;border:none;visibility:hidden';
