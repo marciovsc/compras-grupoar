@@ -1377,6 +1377,9 @@ function abrirFiltroRecibo(itemId){
   const it=C.itens.find(i=>i.id===itemId);
   if(!it){toast('Item não encontrado');return;}
   const fornecedor=it.fornecedor||'—';
+  const setorOpts=SETORES.map((s,idx)=>
+    '<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--c-text)"><input type="checkbox" class="rc-setor-chk" value="'+s+'" checked style="width:16px;height:16px;accent-color:var(--c-accent)"> '+s+'</label>'
+  ).join('');
   showModal(
     '<div style="font-size:16px;font-weight:700;color:var(--c-text);margin-bottom:4px;display:flex;align-items:center;gap:8px">'
     +'<i class="ti ti-file-invoice" style="color:var(--c-accent);font-size:18px"></i> Gerar recibo'
@@ -1388,6 +1391,13 @@ function abrirFiltroRecibo(itemId){
     +'<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--c-text)"><input type="checkbox" id="rc-st-ag" checked style="width:16px;height:16px;accent-color:var(--c-accent)"> Aguardando</label>'
     +'<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--c-text)"><input type="checkbox" id="rc-st-pr" style="width:16px;height:16px;accent-color:var(--c-accent)"> Previsto/Trânsito</label>'
     +'<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--c-text)"><input type="checkbox" id="rc-st-en" style="width:16px;height:16px;accent-color:var(--c-accent)"> Entregue</label>'
+    +'</div>'
+    +'</div>'
+    +'<div class="field" style="margin-bottom:16px">'
+    +'<label>Quais setores incluir?</label>'
+    +'<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">'
+    +setorOpts
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--c-text)"><input type="checkbox" class="rc-setor-chk" value="__sem__" checked style="width:16px;height:16px;accent-color:var(--c-accent)"> Sem setor definido</label>'
     +'</div>'
     +'</div>'
     +'<div class="g8" style="justify-content:flex-end">'
@@ -1403,12 +1413,15 @@ function confirmarGerarRecibo(itemId){
   if(document.getElementById('rc-st-pr')?.checked)statusFiltro.push('Previsto');
   if(document.getElementById('rc-st-en')?.checked)statusFiltro.push('Entregue');
   if(!statusFiltro.length){toast('Selecione ao menos um status');return;}
+  const setorFiltro=[...document.querySelectorAll('.rc-setor-chk:checked')].map(cb=>cb.value);
+  if(!setorFiltro.length){toast('Selecione ao menos um setor');return;}
   closeModal();
-  gerarPDF(itemId,statusFiltro);
+  gerarPDF(itemId,statusFiltro,setorFiltro);
 }
 
-function buildHTML(itemId,statusFiltro){
+function buildHTML(itemId,statusFiltro,setorFiltro){
   statusFiltro=statusFiltro&&statusFiltro.length?statusFiltro:['Aguardando'];
+  setorFiltro=setorFiltro&&setorFiltro.length?setorFiltro:[...SETORES,'__sem__'];
   const itOrigem=C.itens.find(i=>i.id===itemId);
   const pedOrigem=C.pedidos.find(p=>p.id===itOrigem.pedido_id);
   const fornecedorAlvo=itOrigem.fornecedor;
@@ -1417,9 +1430,10 @@ function buildHTML(itemId,statusFiltro){
   const pedsSemana=C.pedidos.filter(p=>p.semana_id===pedOrigem.semana_id);
   const pedIdsSemana=new Set(pedsSemana.map(p=>p.id));
   const norm=s=>(s||'').trim().toLowerCase();
-  const itsAll=C.itens.filter(i=>pedIdsSemana.has(i.pedido_id)&&norm(i.fornecedor)===norm(fornecedorAlvo)&&statusFiltro.includes(i.status||'Aguardando'));
+  const matchSetor=i=>setorFiltro.includes(i.setor||'__sem__');
+  const itsAll=C.itens.filter(i=>pedIdsSemana.has(i.pedido_id)&&norm(i.fornecedor)===norm(fornecedorAlvo)&&statusFiltro.includes(i.status||'Aguardando')&&matchSetor(i));
   if(!itsAll.length){
-    toast('Nenhum item encontrado para "'+fornecedorAlvo+'" com os status selecionados');
+    toast('Nenhum item encontrado para "'+fornecedorAlvo+'" com os status/setores selecionados');
     return{ped:{titulo:fornecedorAlvo},html:null,total:0};
   }
   const total=itsAll.reduce((s,i)=>s+(parseFloat(i.quantidade)||0)*(parseFloat(i.valor_unit)||0),0);
@@ -1510,8 +1524,8 @@ function buildHTML(itemId,statusFiltro){
     +'<div class="footer">Grupo AR — Gerado em '+new Date().toLocaleDateString('pt-BR')+'</div></body></html>';
   return{ped:{titulo:fornecedorAlvo},html,total};
 }
-function gerarPDF(itemId,statusFiltro){
-  const{html}=buildHTML(itemId,statusFiltro);
+function gerarPDF(itemId,statusFiltro,setorFiltro){
+  const{html}=buildHTML(itemId,statusFiltro,setorFiltro);
   if(!html)return;
   const w=window.open('','_blank');w.document.write(html);w.document.close();
 }
