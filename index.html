@@ -713,7 +713,8 @@ function renderSemanaCard(s,allPeds){
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <button class="btn btn-sm" onclick="event.stopPropagation();openNovoPedido('${s.id}')"><i class="ti ti-plus"></i> Pedido</button>
-        <button class="btn btn-sm" onclick="event.stopPropagation();gerarEspelho('${s.id}')" title="Espelho para estoquista"><i class="ti ti-printer"></i> Espelho</button>
+        <button class="btn btn-sm" onclick="event.stopPropagation();abrirFiltroRecibo(null,'${s.id}')" title="Gerar recibo para um fornecedor"><i class="ti ti-file-invoice"></i> Recibo</button>
+        <button class="btn btn-sm" onclick="event.stopPropagation();abrirFiltroEspelho('${s.id}')" title="Espelho para estoquista"><i class="ti ti-printer"></i> Espelho</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();editarSemana('${s.id}')"><i class="ti ti-pencil"></i></button>
         <button class="btn btn-sm" onclick="event.stopPropagation();fecharSemana('${s.id}')" title="Fechar semana" style="color:var(--c-green);border-color:var(--c-green)"><i class="ti ti-lock"></i></button>
         <button class="btn btn-sm btn-del" onclick="event.stopPropagation();delSemana('${s.id}')"><i class="ti ti-trash"></i></button>
@@ -1373,10 +1374,33 @@ function fmtNum(n){
   return'R$ '+parts[0]+','+parts[1];
 }
 
-function abrirFiltroRecibo(itemId){
-  const it=C.itens.find(i=>i.id===itemId);
-  if(!it){toast('Item não encontrado');return;}
-  const fornecedor=it.fornecedor||'—';
+function abrirFiltroRecibo(itemId,semIdDireto){
+  let semId,fornAtual='';
+  if(itemId){
+    const it=C.itens.find(i=>i.id===itemId);
+    if(!it){toast('Item não encontrado');return;}
+    const pedOrigem=C.pedidos.find(p=>p.id===it.pedido_id);
+    if(!pedOrigem){toast('Pedido não encontrado');return;}
+    semId=pedOrigem.semana_id;
+    fornAtual=it.fornecedor||'';
+  } else {
+    semId=semIdDireto;
+    if(!semId){toast('Semana não encontrada');return;}
+  }
+
+  // Lista de fornecedores distintos presentes na mesma semana
+  const pedsSemana=C.pedidos.filter(p=>p.semana_id===semId);
+  const pedIdsSemana=new Set(pedsSemana.map(p=>p.id));
+  const fornecedoresSemana=[...new Set(
+    C.itens.filter(i=>pedIdsSemana.has(i.pedido_id)&&i.fornecedor&&i.fornecedor.trim())
+      .map(i=>i.fornecedor.trim())
+  )].sort((a,b)=>a.localeCompare(b));
+
+  if(!fornecedoresSemana.length){toast('Nenhum fornecedor encontrado nesta semana');return;}
+  const fornOpts=fornecedoresSemana.map(f=>
+    '<option value="'+f.replace(/"/g,'&quot;')+'"'+(f===fornAtual?' selected':'')+'>'+f+'</option>'
+  ).join('');
+
   const setorOpts=SETORES.map((s,idx)=>
     '<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--c-text)"><input type="checkbox" class="rc-setor-chk" value="'+s+'" checked style="width:16px;height:16px;accent-color:var(--c-accent)"> '+s+'</label>'
   ).join('');
@@ -1384,7 +1408,11 @@ function abrirFiltroRecibo(itemId){
     '<div style="font-size:16px;font-weight:700;color:var(--c-text);margin-bottom:4px;display:flex;align-items:center;gap:8px">'
     +'<i class="ti ti-file-invoice" style="color:var(--c-accent);font-size:18px"></i> Gerar recibo'
     +'</div>'
-    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+fornecedor+'</div>'
+    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+semLabel(C.semanas.find(s=>s.id===semId))+'</div>'
+    +'<div class="field" style="margin-bottom:16px">'
+    +'<label>Fornecedor</label>'
+    +'<select id="rc-forn" style="width:100%">'+fornOpts+'</select>'
+    +'</div>'
     +'<div class="field" style="margin-bottom:16px">'
     +'<label>Quais itens incluir (por status)?</label>'
     +'<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">'
@@ -1402,12 +1430,14 @@ function abrirFiltroRecibo(itemId){
     +'</div>'
     +'<div class="g8" style="justify-content:flex-end">'
     +'<button class="btn" onclick="closeModal()">Cancelar</button>'
-    +'<button class="btn btn-acc" onclick="confirmarGerarRecibo(\''+itemId+'\')"><i class="ti ti-check"></i> Gerar recibo</button>'
+    +'<button class="btn btn-acc" onclick="confirmarGerarRecibo(\''+semId+'\')"><i class="ti ti-check"></i> Gerar recibo</button>'
     +'</div>'
   );
 }
 
-function confirmarGerarRecibo(itemId){
+function confirmarGerarRecibo(semId){
+  const fornecedorAlvo=document.getElementById('rc-forn')?.value;
+  if(!fornecedorAlvo){toast('Selecione um fornecedor');return;}
   const statusFiltro=[];
   if(document.getElementById('rc-st-ag')?.checked)statusFiltro.push('Aguardando');
   if(document.getElementById('rc-st-pr')?.checked)statusFiltro.push('Previsto');
@@ -1416,18 +1446,15 @@ function confirmarGerarRecibo(itemId){
   const setorFiltro=[...document.querySelectorAll('.rc-setor-chk:checked')].map(cb=>cb.value);
   if(!setorFiltro.length){toast('Selecione ao menos um setor');return;}
   closeModal();
-  gerarPDF(itemId,statusFiltro,setorFiltro);
+  gerarPDF(semId,fornecedorAlvo,statusFiltro,setorFiltro);
 }
 
-function buildHTML(itemId,statusFiltro,setorFiltro){
+function buildHTML(semId,fornecedorAlvo,statusFiltro,setorFiltro){
   statusFiltro=statusFiltro&&statusFiltro.length?statusFiltro:['Aguardando'];
   setorFiltro=setorFiltro&&setorFiltro.length?setorFiltro:[...SETORES,'__sem__'];
-  const itOrigem=C.itens.find(i=>i.id===itemId);
-  const pedOrigem=C.pedidos.find(p=>p.id===itOrigem.pedido_id);
-  const fornecedorAlvo=itOrigem.fornecedor;
   // Consolida por NOME DO FORNECEDOR — todos os itens de todos os pedidos da mesma
   // semana com esse fornecedor, não importa a categoria nem o pedido de origem.
-  const pedsSemana=C.pedidos.filter(p=>p.semana_id===pedOrigem.semana_id);
+  const pedsSemana=C.pedidos.filter(p=>p.semana_id===semId);
   const pedIdsSemana=new Set(pedsSemana.map(p=>p.id));
   const norm=s=>(s||'').trim().toLowerCase();
   const matchSetor=i=>setorFiltro.includes(i.setor||'__sem__');
@@ -1443,11 +1470,12 @@ function buildHTML(itemId,statusFiltro,setorFiltro){
   const pedsForn=pedsSemana.filter(p=>pedIdsRelevantes.has(p.id));
   const observacao=pedsForn.map(p=>p.observacao).find(o=>o&&o.trim())||'';
   const localEntrega=pedsForn.map(p=>p.local_entrega).find(l=>l&&l.trim())||'';
-  const dataPedido=pedsForn.map(p=>p.data).sort().pop()||pedOrigem.data;
+  const dataPedido=pedsForn.map(p=>p.data).sort().pop()||'';
 
   // Agrupa por restaurante — cada um vira uma seção separada com nota fiscal própria
   const restIds=[...new Set(pedsForn.map(p=>p.restaurante_id))];
   let restSections='';
+
   restIds.forEach(rid=>{
     const rest=C.restaurantes.find(r=>r.id===rid);
     const pedsDoRest=new Set(pedsForn.filter(p=>p.restaurante_id===rid).map(p=>p.id));
@@ -1524,8 +1552,8 @@ function buildHTML(itemId,statusFiltro,setorFiltro){
     +'<div class="footer">Grupo AR — Gerado em '+new Date().toLocaleDateString('pt-BR')+'</div></body></html>';
   return{ped:{titulo:fornecedorAlvo},html,total};
 }
-function gerarPDF(itemId,statusFiltro,setorFiltro){
-  const{html}=buildHTML(itemId,statusFiltro,setorFiltro);
+function gerarPDF(semId,fornecedorAlvo,statusFiltro,setorFiltro){
+  const{html}=buildHTML(semId,fornecedorAlvo,statusFiltro,setorFiltro);
   if(!html)return;
   const w=window.open('','_blank');w.document.write(html);w.document.close();
 }
@@ -1734,7 +1762,54 @@ function dataArquivo(){
   const dd=String(d.getDate()).padStart(2,'0');const mm=String(d.getMonth()+1).padStart(2,'0');const yy=d.getFullYear();return dd+'-'+mm+'-'+yy;
 }
 
-function gerarEspelho(semId){
+function abrirFiltroEspelho(semId){
+  const sem=C.semanas.find(s=>s.id===semId);
+  if(!sem){toast('Semana não encontrada');return;}
+  const setorOpts=SETORES.map(s=>
+    '<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--c-text)"><input type="checkbox" class="ec-setor-chk" value="'+s+'" checked style="width:16px;height:16px;accent-color:var(--c-accent)"> '+s+'</label>'
+  ).join('');
+  showModal(
+    '<div style="font-size:16px;font-weight:700;color:var(--c-text);margin-bottom:4px;display:flex;align-items:center;gap:8px">'
+    +'<i class="ti ti-printer" style="color:var(--c-accent);font-size:18px"></i> Gerar espelho'
+    +'</div>'
+    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+semLabel(sem)+'</div>'
+    +'<div class="field" style="margin-bottom:16px">'
+    +'<label>Quais itens incluir (por status)?</label>'
+    +'<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">'
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--c-text)"><input type="checkbox" id="ec-st-ag" checked style="width:16px;height:16px;accent-color:var(--c-accent)"> Aguardando</label>'
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--c-text)"><input type="checkbox" id="ec-st-pr" checked style="width:16px;height:16px;accent-color:var(--c-accent)"> Previsto/Trânsito</label>'
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--c-text)"><input type="checkbox" id="ec-st-en" checked style="width:16px;height:16px;accent-color:var(--c-accent)"> Entregue</label>'
+    +'</div>'
+    +'</div>'
+    +'<div class="field" style="margin-bottom:16px">'
+    +'<label>Quais setores incluir?</label>'
+    +'<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">'
+    +setorOpts
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--c-text)"><input type="checkbox" class="ec-setor-chk" value="__sem__" checked style="width:16px;height:16px;accent-color:var(--c-accent)"> Sem setor definido</label>'
+    +'</div>'
+    +'</div>'
+    +'<div class="g8" style="justify-content:flex-end">'
+    +'<button class="btn" onclick="closeModal()">Cancelar</button>'
+    +'<button class="btn btn-acc" onclick="confirmarGerarEspelho(\''+semId+'\')"><i class="ti ti-check"></i> Gerar espelho</button>'
+    +'</div>'
+  );
+}
+
+function confirmarGerarEspelho(semId){
+  const statusFiltro=[];
+  if(document.getElementById('ec-st-ag')?.checked)statusFiltro.push('Aguardando');
+  if(document.getElementById('ec-st-pr')?.checked)statusFiltro.push('Previsto');
+  if(document.getElementById('ec-st-en')?.checked)statusFiltro.push('Entregue');
+  if(!statusFiltro.length){toast('Selecione ao menos um status');return;}
+  const setorFiltro=[...document.querySelectorAll('.ec-setor-chk:checked')].map(cb=>cb.value);
+  if(!setorFiltro.length){toast('Selecione ao menos um setor');return;}
+  closeModal();
+  gerarEspelho(semId,statusFiltro,setorFiltro);
+}
+
+function gerarEspelho(semId,statusFiltro,setorFiltro){
+  statusFiltro=statusFiltro&&statusFiltro.length?statusFiltro:['Aguardando','Previsto','Entregue'];
+  setorFiltro=setorFiltro&&setorFiltro.length?setorFiltro:[...SETORES,'__sem__'];
   const sem=C.semanas.find(s=>s.id===semId);
   if(!sem){toast('Semana não encontrada');return;}
   const peds=C.pedidos.filter(p=>p.semana_id===semId);
@@ -1742,7 +1817,10 @@ function gerarEspelho(semId){
   const rows=[];
   peds.forEach(p=>{
     const rest=C.restaurantes.find(r=>r.id===p.restaurante_id);
-    C.itens.filter(i=>i.pedido_id===p.id).forEach(it=>{
+    C.itens.filter(i=>i.pedido_id===p.id
+      &&statusFiltro.includes(i.status||'Aguardando')
+      &&setorFiltro.includes(i.setor||'__sem__')
+    ).forEach(it=>{
       rows.push({
         restNome:rest?rest.nome:'—',
         forn:it.fornecedor||p.titulo||'—',
@@ -1756,7 +1834,7 @@ function gerarEspelho(semId){
       });
     });
   });
-  if(!rows.length){toast('Nenhum item nesta semana');return;}
+  if(!rows.length){toast('Nenhum item encontrado com os status/setores selecionados');return;}
   rows.sort((a,b)=>a.forn.localeCompare(b.forn)||a.cat.localeCompare(b.cat)||a.item.localeCompare(b.item));
   const total=rows.reduce((s,r)=>s+r.valor*r.qty,0);
   let lastForn='',tbody='',n=0;
