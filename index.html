@@ -876,9 +876,13 @@ async function delItem(itemId, pedId){
 async function updItemForn(itemId, pedId, val){
   const v=val.trim();
   if(!v)return;
-  const {error}=await supa.from('pedido_itens').update({fornecedor:v}).eq('id',itemId);
+  const itAntes=C.itens.find(i=>i.id===itemId);
+  const nomeItem=itAntes?itAntes.produto:'item';
+  const {data,error}=await supa.from('pedido_itens').update({fornecedor:v}).eq('id',itemId).select();
   if(error){toast('Erro ao salvar fornecedor do item: '+error.message);return;}
+  if(!data||!data.length){toast('⚠ "'+nomeItem+'" NÃO foi salvo (bloqueio de permissão no banco). Avise o suporte.');return;}
   C.itens=C.itens.map(i=>i.id===itemId?{...i,fornecedor:v}:i);
+  toast('"'+nomeItem+'" → fornecedor: "'+v+'"');
 }
 
 function abrirDescricaoPedido(pedId,tabela){
