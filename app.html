@@ -1473,15 +1473,36 @@ function mcMostrarSalvo(){
   }else el.innerHTML='';
 }
 
-function openMontarCompra(semId){
-  if(mc.semId!==(semId||null)){
-    const salvo=mcLerTodos()[semId||'_'];
-    mc={semId:semId||null,forns:[mcNovoForn()],ativo:0,cat:'',criando:false,salvoEm:null};
-    if(salvo&&Array.isArray(salvo.forns)&&salvo.forns.length){
-      mc.forns=salvo.forns.map(f=>({nome:f.nome||'',itens:(f.itens||[]).map(it=>({...it,dist:it.dist||{}}))}));
-      mc.ativo=salvo.ativo||0;mc.cat=salvo.cat||'';mc.salvoEm=salvo.salvoEm||null;
-    }
+// Carrega para a memória a compra salva de uma semana (ou começa uma vazia)
+function mcCarregar(semId){
+  const salvo=mcLerTodos()[semId||'_'];
+  mc={semId:semId||null,forns:[mcNovoForn()],ativo:0,cat:'',criando:false,salvoEm:null};
+  if(salvo&&Array.isArray(salvo.forns)&&salvo.forns.length){
+    mc.forns=salvo.forns.map(f=>({nome:f.nome||'',itens:(f.itens||[]).map(it=>({...it,dist:it.dist||{}}))}));
+    mc.ativo=salvo.ativo||0;mc.cat=salvo.cat||'';mc.salvoEm=salvo.salvoEm||null;
   }
+}
+function mcTemSalvo(semId){const sv=mcLerTodos()[semId||'_'];return !!(sv&&(sv.forns||[]).some(f=>(f.itens||[]).length));}
+// Muda a compra montada de semana, só quando o usuário escolhe e confirma
+function mcMudarSemana(v){
+  const nova=C.semanas.find(s=>String(s.id)===String(v));
+  if(!nova||nova.id===mc.semId)return;
+  if(mcTemSalvo(nova.id)){
+    alert('A semana '+semPeriodo(nova)+' já tem outra compra em andamento. Abra ela pelo botão "Montar compra" dessa semana e crie os pedidos ou descarte antes de mover esta para lá.');
+    mcPasso1();return;
+  }
+  if(!confirm('Mover esta compra para a semana '+semPeriodo(nova)+'? Os pedidos serão criados nessa semana.')){mcPasso1();return;}
+  const velha=mc.semId;
+  mc.semId=nova.id;
+  mcSalvar();          // grava na semana nova primeiro
+  mcApagarSalvo(velha);// só depois tira da semana antiga
+  if(typeof renderPedidos==='function')renderPedidos();
+  mcPasso1();
+  toast('Compra movida para '+semPeriodo(nova));
+}
+
+function openMontarCompra(semId){
+  if(mc.semId!==(semId||null))mcCarregar(semId);
   if(!mc.forns.length)mc.forns=[mcNovoForn()];
   if(!mc.cat||!C.categorias.find(c=>c.nome===mc.cat))mc.cat=C.categorias[0]?.nome||'';
   mcPasso1();
@@ -1494,7 +1515,11 @@ function mcPasso1(){
     <div style="font-size:16px;font-weight:600;color:var(--c-text);margin:2px 0 4px;display:flex;align-items:center;gap:8px">
       <i class="ti ti-basket" style="color:var(--c-accent);font-size:18px"></i> Montar compra
     </div>
-    <div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">${sem?semLabel(sem)+' · ':''}ainda sem loja definida. A loja é escolhida no próximo passo.</div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+      <label style="font-size:11px;font-weight:600;color:var(--c-dim);text-transform:uppercase;letter-spacing:0.05em">Semana</label>
+      <select onchange="mcMudarSemana(this.value)" title="Trocar a semana desta compra" style="width:auto;min-width:220px;padding:5px 8px;font-size:12px;font-weight:600">${[...C.semanas].sort((a,b)=>(b.data_inicio||'').localeCompare(a.data_inicio||'')).map(s=>'<option value="'+s.id+'"'+(s.id===mc.semId?' selected':'')+'>'+mcEsc(semPeriodo(s)||s.nome||'')+'</option>').join('')}${sem?'':'<option value="" selected>—</option>'}</select>
+    </div>
+    <div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">Ainda sem loja definida. A loja é escolhida no próximo passo.</div>
     <div id="mc-salvo" style="font-size:11px;color:var(--c-green);margin:-8px 0 12px"></div>
     <div id="mc-forns"></div>
     <div style="margin:4px 0 14px"><button class="btn btn-sm" onclick="mcAddForn()"><i class="ti ti-plus"></i> Adicionar outro fornecedor</button></div>
@@ -2205,10 +2230,10 @@ function ctUsarNaCompra(){
   if(!semId){alert('Não encontrei a semana desta cotação.');return;}
   let msg=prontos.length+' item(ns) vão para o "Montar compra", separados por fornecedor.';
   if(faltam.length)msg+='\n\nAinda sem fornecedor escolhido (não vão):\n• '+faltam.map(i=>i.produto).join('\n• ');
-  const temCompra=mc.semId===semId&&mc.forns.some(f=>f.itens.length);
+  const temCompra=(mc.semId===semId&&mc.forns.some(f=>f.itens.length))||(mc.semId!==semId&&mcTemSalvo(semId));
   if(temCompra)msg+='\n\nJá existe uma compra sendo montada nesta semana. Os itens serão juntados a ela.';
   if(!confirm(msg+'\n\nContinuar?'))return;
-  if(mc.semId!==semId)mc={semId,forns:[],ativo:0,cat:'',criando:false};
+  if(mc.semId!==semId)mcCarregar(semId);
   mc.forns=mc.forns.filter(f=>f.itens.length||f.nome.trim());
   prontos.forEach(it=>{
     let f=mc.forns.find(x=>ctNorm(x.nome)===ctNorm(it.fornecedor_escolhido));
@@ -2221,6 +2246,7 @@ function ctUsarNaCompra(){
   });
   if(!mc.forns.length)mc.forns=[mcNovoForn()];
   mc.ativo=0;
+  mcSalvar();
   openMontarCompra(semId);
 }
 
