@@ -782,8 +782,7 @@ function renderSemanaCard(s,allPeds){
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <button class="btn btn-sm" onclick="event.stopPropagation();openNovoPedido('${s.id}')"><i class="ti ti-plus"></i> Pedido</button>
-        <button class="btn btn-sm" onclick="event.stopPropagation();openMontarCompra('${s.id}')" title="Montar a compra primeiro e escolher a loja depois"><i class="ti ti-basket"></i> Montar compra${(mcLerTodos()[s.id]?.forns||[]).some(f=>(f.itens||[]).length)?' <span style="color:var(--c-accent);font-weight:600">(em andamento)</span>':''}</button>
-        <button class="btn btn-sm" onclick="event.stopPropagation();openCotacoes('${s.id}')" title="Pedir preço aos fornecedores e comparar"><i class="ti ti-report-money"></i> Cotação</button>
+        <button class="btn btn-sm" onclick="event.stopPropagation();openCompra('${s.id}')" title="Cotação, lançar itens e dividir entre as lojas"><i class="ti ti-shopping-cart"></i> Compra${(mcLerTodos()[s.id]?.forns||[]).some(f=>(f.itens||[]).length)?' <span style="color:var(--c-accent);font-weight:600">(em andamento)</span>':''}</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();openMoverItens('${s.id}')" title="Passar itens desta loja para outra"><i class="ti ti-arrows-exchange"></i> Mover</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();openEquilibrar('${s.id}')" title="Dividir a semana entre as lojas pela porcentagem"><i class="ti ti-scale"></i> Equilibrar lojas</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();abrirFiltroRecibo(null,'${s.id}')" title="Gerar recibo para um fornecedor"><i class="ti ti-file-invoice"></i> Recibo</button>
@@ -1838,7 +1837,7 @@ function mcMudarSemana(v){
   const nova=C.semanas.find(s=>String(s.id)===String(v));
   if(!nova||nova.id===mc.semId)return;
   if(mcTemSalvo(nova.id)){
-    alert('A semana '+semPeriodo(nova)+' já tem outra compra em andamento. Abra ela pelo botão "Montar compra" dessa semana e crie os pedidos ou descarte antes de mover esta para lá.');
+    alert('A semana '+semPeriodo(nova)+' já tem outra compra em andamento. Abra ela pelo botão "Compra" dessa semana e crie os pedidos ou descarte antes de mover esta para lá.');
     mcPasso1();return;
   }
   if(!confirm('Mover esta compra para a semana '+semPeriodo(nova)+'? Os pedidos serão criados nessa semana.')){mcPasso1();return;}
@@ -1891,6 +1890,7 @@ function mcPasso1(){
         <span id="mc-total" style="font-size:20px;font-weight:700;color:var(--c-accent);white-space:nowrap">R$ 0,00</span>
       </div>
       <div class="g8">
+        <button class="btn" onclick="openCompra(mc.semId)"><i class="ti ti-arrow-left"></i> Voltar</button>
         <button class="btn" onclick="mcDescartar()" title="Apaga tudo o que foi digitado nesta compra">Descartar compra</button>
         <button class="btn" onclick="closeModal()">Fechar</button>
         <button class="btn btn-acc" onclick="mcIrPasso2()">Próximo: escolher as lojas <i class="ti ti-arrow-right"></i></button>
@@ -2191,37 +2191,128 @@ function ctErroBanco(error){
 }
 
 // Lista das cotações da semana
-async function openCotacoes(semId){
-  showModal(ctTitulo('Cotação')+'<div style="font-size:13px;color:var(--c-dim);padding:14px 0">Carregando...</div>');
-  const sem=C.semanas.find(s=>s.id===semId);
-  const r=await supa.from('cot_rodadas').select('*').eq('semana_id',String(semId)).order('criado_em',{ascending:false});
-  if(r.error){ctErroBanco(r.error);return;}
-  const rods=r.data||[];
-  const cont={};
-  if(rods.length){
-    const {data:cv}=await supa.from('cot_convites').select('rodada_id,respondido_em').in('rodada_id',rods.map(x=>x.id));
-    (cv||[]).forEach(c=>{const k=cont[c.rodada_id]=cont[c.rodada_id]||{t:0,r:0};k.t++;if(c.respondido_em)k.r++;});
-  }
-  const temRascunho=ct.semId===semId&&ct.itens.length;
-  const linhas=rods.length?rods.map(x=>{
-    const k=cont[x.id]||{t:0,r:0};
-    const st=x.status==='Aberta'?'<span style="color:var(--c-orange);font-weight:600">Aberta</span>':'<span style="color:var(--c-dim);font-weight:600">Fechada</span>';
-    return '<tr style="cursor:pointer" onclick="ctAbrir(\''+x.id+'\')">'
-      +'<td style="font-size:13px;font-weight:600">'+mcEsc(x.titulo||'Cotação')+'</td>'
-      +'<td style="font-size:12px;color:var(--c-dim);white-space:nowrap">'+ctDH(x.criado_em)+'</td>'
-      +'<td style="font-size:12px">'+st+'</td>'
-      +'<td style="font-size:12px;white-space:nowrap">'+k.r+' de '+k.t+' responderam</td>'
-      +'<td><button class="btn btn-xs btn-xs-acc">Abrir</button></td></tr>';
-  }).join(''):'<tr><td colspan="5" style="font-size:13px;color:var(--c-dim);padding:14px">Nenhuma cotação nesta semana ainda.</td></tr>';
-  showModal(ctTitulo('Cotação')
-    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+(sem?semLabel(sem):'')+'</div>'
-    +'<div style="overflow-x:auto"><table class="ped-table"><thead><tr><th>Cotação</th><th>Criada em</th><th>Situação</th><th>Respostas</th><th></th></tr></thead><tbody>'+linhas+'</tbody></table></div>'
-    +'<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;border-top:1px solid var(--c-border);padding-top:12px;margin-top:14px">'
-      +'<button class="btn" onclick="ctFornecedores(function(){openCotacoes(\''+semId+'\')})"><i class="ti ti-address-book"></i> Fornecedores</button>'
-      +'<div class="g8"><button class="btn" onclick="closeModal()">Fechar</button>'
-      +'<button class="btn btn-acc" onclick="ctNova(\''+semId+'\')"><i class="ti ti-plus"></i> '+(temRascunho?'Continuar nova cotação':'Nova cotação')+'</button></div>'
-    +'</div>',{wide:true});
+// ── COMPRA (porta de entrada única: cotação + lançar direto + dividir entre as lojas) ──
+// Só lê e mostra o andamento. Cada caminho abre as telas que já existiam.
+function compraEsperando(semId){
+  showModal('<div style="font-size:16px;font-weight:600;color:var(--c-text);margin:2px 0 4px;display:flex;align-items:center;gap:8px"><i class="ti ti-shopping-cart" style="color:var(--c-accent);font-size:18px"></i> Compra</div><div style="font-size:13px;color:var(--c-dim);padding:14px 0">Carregando...</div>',{wide:true});
 }
+async function openCompra(semId){
+  compraEsperando(semId);
+  const sem=C.semanas.find(s=>String(s.id)===String(semId));
+  // Cotações da semana
+  let rods=[],convs=[],itensCot=[],erroCot=false;
+  const r=await supa.from('cot_rodadas').select('*').eq('semana_id',String(semId)).order('criado_em',{ascending:false});
+  if(r.error)erroCot=true;else rods=r.data||[];
+  if(rods.length){
+    const ids=rods.map(x=>x.id);
+    const [cv,ci]=await Promise.all([
+      supa.from('cot_convites').select('rodada_id,respondido_em').in('rodada_id',ids),
+      supa.from('cot_itens').select('rodada_id,cotar,fornecedor_escolhido').in('rodada_id',ids)
+    ]);
+    convs=cv.data||[];itensCot=ci.data||[];
+  }
+  const cont={};
+  rods.forEach(x=>cont[x.id]={t:0,r:0,semEscolha:0});
+  convs.forEach(c=>{const k=cont[c.rodada_id];if(!k)return;k.t++;if(c.respondido_em)k.r++;});
+  itensCot.forEach(i=>{const k=cont[i.rodada_id];if(k&&i.cotar!==false&&!(i.fornecedor_escolhido&&String(i.fornecedor_escolhido).trim()))k.semEscolha++;});
+  const aguardando=rods.filter(x=>x.status==='Aberta'&&cont[x.id].t>cont[x.id].r).length;
+  const paraEscolher=rods.reduce((s,x)=>s+(cont[x.id].r>0?cont[x.id].semEscolha:0),0);
+  // Compra montada (lançamento direto + o que veio da cotação)
+  const sv=(mc.semId===semId&&mcTemConteudo())?mc:mcLerTodos()[String(semId)];
+  const forns=((sv&&sv.forns)||[]).filter(f=>(f.itens||[]).length);
+  const nItens=forns.reduce((s,f)=>s+f.itens.length,0);
+  const total=forns.reduce((s,f)=>s+f.itens.reduce((a,it)=>a+mcN(it.qty)*mcN(it.valor),0),0);
+  const nPeds=C.pedidos.filter(p=>String(p.semana_id)===String(semId)).length;
+  const nFixos=C.produtos.filter(p=>p.fornecedor_fixo&&String(p.fornecedor_fixo).trim()).length;
+  const temRascunhoCot=ct.semId===semId&&ct.itens.length;
+
+  // Frase do andamento
+  const partes=[];
+  if(aguardando)partes.push('<b style="color:var(--c-accent)">'+aguardando+' cotaç'+(aguardando===1?'ão aguardando':'ões aguardando')+' resposta</b>');
+  if(paraEscolher)partes.push(paraEscolher+' ite'+(paraEscolher===1?'m':'ns')+' com preço para escolher');
+  if(nItens)partes.push('<b style="color:var(--c-accent)">'+nItens+' ite'+(nItens===1?'m pronto':'ns prontos')+' para dividir</b>');
+  let frase;
+  if(partes.length)frase=partes.length===1?partes[0]:partes.slice(0,-1).join(', ')+' e '+partes[partes.length-1];
+  else frase=nPeds?'Nada em andamento. Esta semana já tem '+nPeds+' pedido(s) criado(s).':'Nada começado ainda. Escolha um dos caminhos abaixo.';
+  frase=frase.charAt(0).toUpperCase()+frase.slice(1)+(partes.length?'.':'');
+
+  const etapa=(tit,sub,estado)=>{
+    const cor=estado==='feito'?'var(--c-green)':estado==='agora'?'var(--c-orange)':'var(--c-border)';
+    const corT=estado==='feito'?'var(--c-green)':estado==='agora'?'var(--c-orange)':'var(--c-text)';
+    return '<div style="flex:1;min-width:130px;background:var(--c-white);border:1px solid '+cor+';'+(estado==='agora'?'box-shadow:inset 0 0 0 1px var(--c-orange);':'')+'border-radius:8px;padding:8px 10px">'
+      +'<div style="font-size:12px;font-weight:700;color:'+corT+'">'+tit+'</div><div style="font-size:12px;color:var(--c-dim)">'+sub+'</div></div>';
+  };
+  const trilha='<div style="display:flex;gap:6px;flex-wrap:wrap">'
+    +etapa('Cotação enviada',rods.length?rods.length+' cotaç'+(rods.length===1?'ão':'ões'):'nenhuma',rods.length?'feito':'')
+    +etapa('Escolher preço',paraEscolher?paraEscolher+' ite'+(paraEscolher===1?'m':'ns')+' sem escolha':(rods.length?'nada pendente':'—'),paraEscolher?'agora':(rods.length?'feito':''))
+    +etapa('Dividir entre lojas',nItens?nItens+' ite'+(nItens===1?'m pronto':'ns prontos'):'nada pronto',nItens?'agora':'')
+    +etapa('Pedidos criados',nPeds?nPeds+' pedido(s) na semana':'ainda não',nPeds&&!nItens?'feito':'')
+    +'</div>';
+
+  // Caminho 1: cotação
+  const linhaCot=rods.length?rods.map(x=>{
+    const k=cont[x.id];
+    const tag=x.status!=='Aberta'?'<span class="badge" style="background:var(--c-bg);color:var(--c-dim)">Fechada</span>'
+      :'<span class="badge" style="background:'+(k.t&&k.r>=k.t?'var(--c-green-bg);color:var(--c-green)':'var(--c-orange-bg);color:var(--c-orange)')+'">'+k.r+' de '+k.t+' responderam</span>';
+    return '<div onclick="ctAbrir(\''+x.id+'\')" title="Abrir para ver os preços e escolher" style="cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--c-border);font-size:12.5px">'
+      +'<span style="min-width:0;overflow-wrap:anywhere;font-weight:600">'+mcEsc(x.titulo||'Cotação')+(k.r>0&&k.semEscolha?' <span style="font-weight:400;color:var(--c-orange)">· '+k.semEscolha+' para escolher</span>':'')+'</span>'+tag+'</div>';
+  }).join(''):'<div style="font-size:12px;color:var(--c-dim);padding:7px 0;border-bottom:1px solid var(--c-border)">'+(erroCot?'Não consegui carregar as cotações.':'Nenhuma cotação nesta semana.')+'</div>';
+  // Caminho 3: dividir
+  const linhaDiv=forns.length?forns.map(f=>'<div style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--c-border);font-size:12.5px"><span style="min-width:0;overflow-wrap:anywhere">'+mcEsc((f.nome||'(sem fornecedor)').toUpperCase())+'</span><span style="white-space:nowrap">'+f.itens.length+' ite'+(f.itens.length===1?'m':'ns')+'</span></div>').join('')
+    +'<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;padding-top:7px"><span>Total</span><span style="white-space:nowrap">'+fmt(total)+'</span></div>'
+    :'<div style="font-size:12px;color:var(--c-dim);padding:7px 0;border-bottom:1px solid var(--c-border)">Nada pronto ainda. Lance itens ou use os preços escolhidos na cotação.</div>';
+  const lojas='<div style="display:flex;gap:4px;flex-wrap:wrap">'+C.restaurantes.map(x=>restBadgeHtml(x.nome)).join('')+'</div>';
+
+  const caixa=(n,tit,txt,corpo,botoes,dest)=>'<div style="flex:1;min-width:240px;border:1px solid '+(dest?'var(--c-accent)':'var(--c-border)')+';'+(dest?'background:var(--c-accent-bg);':'')+'border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px">'
+    +'<div style="display:flex;align-items:center;gap:8px"><span style="width:24px;height:24px;border-radius:50%;background:'+(dest?'var(--c-accent);color:#fff':'var(--c-accent-bg);color:var(--c-accent)')+';font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0">'+n+'</span><b style="font-size:15px;color:var(--c-text)">'+tit+'</b></div>'
+    +'<div style="font-size:12.5px;color:var(--c-dim)">'+txt+'</div>'
+    +'<div style="border-top:1px solid var(--c-border)">'+corpo+'</div>'
+    +'<div style="margin-top:auto;display:flex;gap:6px;flex-wrap:wrap">'+botoes+'</div></div>';
+
+  const c1=caixa(1,'Pedir cotação','Para os itens em que você quer comparar preço. Manda o link pelo WhatsApp e escolhe o melhor.',linhaCot,
+    '<button class="btn btn-acc btn-sm" onclick="ctNova(\''+semId+'\')"><i class="ti ti-plus"></i> '+(temRascunhoCot?'Continuar nova cotação':'Nova cotação')+'</button>'
+    +'<button class="btn btn-sm" onclick="ctFornecedores(function(){openCompra(\''+semId+'\')})"><i class="ti ti-address-book"></i> Fornecedores</button>');
+  const c2=caixa(2,'Lançar direto','Para os itens com fornecedor fixo, ou quando você já sabe de quem vai comprar. Você digita quantidade e preço.',
+    '<div style="font-size:12px;color:var(--c-dim);padding:7px 0;border-bottom:1px solid var(--c-border)">'+(nFixos?nFixos+' produto(s) com fornecedor fixo cadastrado.':'Nenhum produto com fornecedor fixo cadastrado ainda.')+'</div>',
+    '<button class="btn btn-acc btn-sm" onclick="openMontarCompra(\''+semId+'\')"><i class="ti ti-plus"></i> Lançar itens</button>');
+  const c3=caixa(3,'Dividir entre as lojas','Junta o que veio da cotação e do lançamento direto. Você diz quanto vai para cada loja e cria os pedidos.',
+    linhaDiv+(forns.length?'<div style="padding-top:8px">'+lojas+'</div>':''),
+    nItens?'<button class="btn btn-acc" onclick="compraDividir(\''+semId+'\')"><i class="ti ti-arrows-split"></i> Dividir e criar pedidos</button>'
+      +'<button class="btn btn-sm" onclick="openMontarCompra(\''+semId+'\')"><i class="ti ti-pencil"></i> Ver e editar</button>'
+      :'<button class="btn" disabled style="opacity:.5;cursor:default">Dividir e criar pedidos</button>',true);
+
+  showModal('<div style="font-size:16px;font-weight:600;color:var(--c-text);margin:2px 0 4px;display:flex;align-items:center;gap:8px"><i class="ti ti-shopping-cart" style="color:var(--c-accent);font-size:18px"></i> Compra</div>'
+    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+(sem?semLabel(sem):'')+'</div>'
+    +'<div style="background:var(--c-bg);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;margin-bottom:16px">'
+      +'<div style="font-size:11px;font-weight:700;color:var(--c-dim);text-transform:uppercase;letter-spacing:0.06em">Andamento desta semana</div>'
+      +'<div style="font-size:14px;color:var(--c-text)">'+frase+'</div>'+trilha+'</div>'
+    +'<div style="display:flex;gap:12px;flex-wrap:wrap">'+c1+c2+c3+'</div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--c-border);padding-top:12px;margin-top:16px">'
+      +'<span style="font-size:12px;color:var(--c-dim)">Tudo fica salvo na nuvem sozinho. Você pode fechar e voltar depois.</span>'
+      +'<div class="g8">'+(nItens?'<button class="btn btn-del" onclick="compraDescartar(\''+semId+'\')">Descartar compra</button>':'')
+      +'<button class="btn" onclick="closeModal()">Fechar</button></div></div>',{wide:true});
+}
+// Carrega a compra montada da semana sem desenhar a tela (mesma regra do openMontarCompra)
+function compraCarregarMc(semId){
+  const sv=mcLerTodos()[String(semId||'_')];
+  if(mc.semId!==(semId||null)||(sv&&(sv.salvoEm||'')>(mc.salvoEm||''))||(!sv&&mc.salvoEm))mcCarregar(semId);
+  if(!mc.forns.length)mc.forns=[mcNovoForn()];
+}
+function compraDividir(semId){
+  compraCarregarMc(semId);
+  openMontarCompra(semId);
+  mcIrPasso2();
+}
+function compraDescartar(semId){
+  compraCarregarMc(semId);
+  if(!confirm('Apagar tudo o que foi lançado nesta compra? Os pedidos ainda não foram criados, então isso não pode ser desfeito.\n\n(As cotações não são apagadas.)'))return;
+  mc={semId:mc.semId,forns:[mcNovoForn()],ativo:0,cat:mc.cat,criando:false,salvoEm:null};
+  mcApagarSalvo(semId);
+  if(typeof renderPedidos==='function')renderPedidos();
+  openCompra(semId);
+}
+// A antiga lista de cotações agora é a tela Compra
+function openCotacoes(semId){return openCompra(semId);}
 
 // Cadastro de fornecedores (nome, WhatsApp, e-mail)
 let ctVoltar=null;
@@ -2581,7 +2672,7 @@ function ctUsarNaCompra(){
   if(!prontos.length){alert('Nenhum item tem fornecedor escolhido ainda. Clique nos preços para escolher.');return;}
   const semId=C.semanas.find(s=>String(s.id)===String(rodada.semana_id))?.id;
   if(!semId){alert('Não encontrei a semana desta cotação.');return;}
-  let msg=prontos.length+' item(ns) vão para o "Montar compra", separados por fornecedor.';
+  let msg=prontos.length+' item(ns) vão para a compra da semana (passo "Dividir entre as lojas"), separados por fornecedor.';
   if(faltam.length)msg+='\n\nAinda sem fornecedor escolhido (não vão):\n• '+faltam.map(i=>i.produto).join('\n• ');
   const temCompra=(mc.semId===semId&&mc.forns.some(f=>f.itens.length))||(mc.semId!==semId&&mcTemSalvo(semId));
   if(temCompra)msg+='\n\nJá existe uma compra sendo montada nesta semana. Os itens serão juntados a ela.';
