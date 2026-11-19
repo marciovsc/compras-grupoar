@@ -777,7 +777,7 @@ function renderSemanaCard(s,allPeds){
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <button class="btn btn-sm" onclick="event.stopPropagation();openNovoPedido('${s.id}')"><i class="ti ti-plus"></i> Pedido</button>
-        <button class="btn btn-sm" onclick="event.stopPropagation();openMontarCompra('${s.id}')" title="Montar a compra primeiro e escolher a loja depois"><i class="ti ti-basket"></i> Montar compra</button>
+        <button class="btn btn-sm" onclick="event.stopPropagation();openMontarCompra('${s.id}')" title="Montar a compra primeiro e escolher a loja depois"><i class="ti ti-basket"></i> Montar compra${(mcLerTodos()[s.id]?.forns||[]).some(f=>(f.itens||[]).length)?' <span style="color:var(--c-accent);font-weight:600">(em andamento)</span>':''}</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();openCotacoes('${s.id}')" title="Pedir preço aos fornecedores e comparar"><i class="ti ti-report-money"></i> Cotação</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();abrirFiltroRecibo(null,'${s.id}')" title="Gerar recibo para um fornecedor"><i class="ti ti-file-invoice"></i> Recibo</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();abrirFiltroEspelho('${s.id}')" title="Espelho para estoquista"><i class="ti ti-printer"></i> Espelho</button>
@@ -1451,9 +1451,37 @@ function mcEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g
 function mcN(v){const n=parseFloat(String(v==null?'':v).replace(',','.'));return isNaN(n)?0:n;}
 function mcQ(n){return String(Math.round(n*1000)/1000).replace('.',',');}
 function mcNovoForn(){return{nome:'',itens:[]};}
+// Salvamento automático no navegador (por semana). Fica neste computador/navegador.
+const MC_KEY='ar_montar_compra_v1';
+function mcLerTodos(){try{return JSON.parse(localStorage.getItem(MC_KEY)||'{}')||{};}catch(e){return{};}}
+function mcTemConteudo(){return mc.forns.some(f=>f.itens.length||f.nome.trim());}
+function mcSalvar(){
+  try{
+    const all=mcLerTodos();const k=mc.semId||'_';
+    if(mcTemConteudo()){mc.salvoEm=new Date().toISOString();all[k]={forns:mc.forns,ativo:mc.ativo,cat:mc.cat,salvoEm:mc.salvoEm};}
+    else delete all[k];
+    localStorage.setItem(MC_KEY,JSON.stringify(all));
+  }catch(e){mc.salvoEm=null;}
+  mcMostrarSalvo();
+}
+function mcApagarSalvo(semId){try{const all=mcLerTodos();delete all[semId||'_'];localStorage.setItem(MC_KEY,JSON.stringify(all));}catch(e){}}
+function mcMostrarSalvo(){
+  const el=document.getElementById('mc-salvo');if(!el)return;
+  if(mc.salvoEm&&mcTemConteudo()){
+    const h=new Date(mc.salvoEm).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    el.innerHTML='<i class="ti ti-device-floppy"></i> Salvo automaticamente neste computador às '+h;
+  }else el.innerHTML='';
+}
 
 function openMontarCompra(semId){
-  if(mc.semId!==(semId||null)){mc={semId:semId||null,forns:[mcNovoForn()],ativo:0,cat:'',criando:false};}
+  if(mc.semId!==(semId||null)){
+    const salvo=mcLerTodos()[semId||'_'];
+    mc={semId:semId||null,forns:[mcNovoForn()],ativo:0,cat:'',criando:false,salvoEm:null};
+    if(salvo&&Array.isArray(salvo.forns)&&salvo.forns.length){
+      mc.forns=salvo.forns.map(f=>({nome:f.nome||'',itens:(f.itens||[]).map(it=>({...it,dist:it.dist||{}}))}));
+      mc.ativo=salvo.ativo||0;mc.cat=salvo.cat||'';mc.salvoEm=salvo.salvoEm||null;
+    }
+  }
   if(!mc.forns.length)mc.forns=[mcNovoForn()];
   if(!mc.cat||!C.categorias.find(c=>c.nome===mc.cat))mc.cat=C.categorias[0]?.nome||'';
   mcPasso1();
@@ -1467,6 +1495,7 @@ function mcPasso1(){
       <i class="ti ti-basket" style="color:var(--c-accent);font-size:18px"></i> Montar compra
     </div>
     <div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">${sem?semLabel(sem)+' · ':''}ainda sem loja definida. A loja é escolhida no próximo passo.</div>
+    <div id="mc-salvo" style="font-size:11px;color:var(--c-green);margin:-8px 0 12px"></div>
     <div id="mc-forns"></div>
     <div style="margin:4px 0 14px"><button class="btn btn-sm" onclick="mcAddForn()"><i class="ti ti-plus"></i> Adicionar outro fornecedor</button></div>
     <div style="background:var(--c-bg);border:1px solid var(--c-border);border-radius:10px;padding:12px 14px">
@@ -1492,6 +1521,7 @@ function mcPasso1(){
   mcRenderForns();
   mcRenderPills();
   mcFiltrar();
+  mcMostrarSalvo();
 }
 
 function mcRenderForns(){
@@ -1574,13 +1604,14 @@ function mcToggleProd(pid){
     const p=C.produtos.find(x=>x.id===pid);if(!p)return;
     f.itens.push({pid:p.id,nome:p.nome,unidade:p.unidade,categoria:p.categoria,qty:'',valor:'',dist:{}});
   }
-  mcRenderForns();
+  mcRenderForns();mcSalvar();
 }
 function mcSetForn(fi,v){
   if(!mc.forns[fi])return;
   mc.forns[fi].nome=v;
   const sel=document.getElementById('mc-ativo');
   if(sel&&sel.options[fi])sel.options[fi].textContent=v.trim()?v.toUpperCase():'Fornecedor '+(fi+1)+' (sem nome)';
+  mcSalvar();
 }
 function mcSetItem(fi,ii,campo,v){
   const it=mc.forns[fi]?.itens[ii];if(!it)return;
@@ -1588,22 +1619,23 @@ function mcSetItem(fi,ii,campo,v){
   const lt=document.getElementById('mc-lt-'+fi+'-'+ii);if(lt)lt.textContent=fmt(mcN(it.qty)*mcN(it.valor));
   const sub=document.getElementById('mc-sub-'+fi);
   if(sub)sub.textContent=fmt(mc.forns[fi].itens.reduce((s,x)=>s+mcN(x.qty)*mcN(x.valor),0));
-  mcTotal();
+  mcTotal();mcSalvar();
 }
-function mcRemItem(fi,ii){mc.forns[fi]?.itens.splice(ii,1);mcRenderForns();mcFiltrar();}
-function mcAddForn(){mc.forns.push(mcNovoForn());mc.ativo=mc.forns.length-1;mcRenderForns();mcFiltrar();}
+function mcRemItem(fi,ii){mc.forns[fi]?.itens.splice(ii,1);mcRenderForns();mcFiltrar();mcSalvar();}
+function mcAddForn(){mc.forns.push(mcNovoForn());mc.ativo=mc.forns.length-1;mcRenderForns();mcFiltrar();mcSalvar();}
 function mcRemForn(fi){
   const f=mc.forns[fi];if(!f)return;
   if(f.itens.length&&!confirm('Tirar o fornecedor '+(f.nome.trim()?f.nome.toUpperCase():'sem nome')+' e os '+f.itens.length+' produto(s) dele desta compra?'))return;
   mc.forns.splice(fi,1);
   if(!mc.forns.length)mc.forns=[mcNovoForn()];
   if(mc.ativo>=mc.forns.length)mc.ativo=mc.forns.length-1;
-  mcRenderForns();mcFiltrar();
+  mcRenderForns();mcFiltrar();mcSalvar();
 }
-function mcSetAtivo(fi){mc.ativo=parseInt(fi)||0;mcRenderForns();mcFiltrar();}
+function mcSetAtivo(fi){mc.ativo=parseInt(fi)||0;mcRenderForns();mcFiltrar();mcSalvar();}
 function mcDescartar(){
-  if(!confirm('Apagar tudo o que foi digitado nesta compra? Nada foi salvo no sistema ainda.'))return;
-  mc={semId:mc.semId,forns:[mcNovoForn()],ativo:0,cat:mc.cat,criando:false};
+  if(!confirm('Apagar tudo o que foi digitado nesta compra? Os pedidos ainda não foram criados, então isso não pode ser desfeito.'))return;
+  mc={semId:mc.semId,forns:[mcNovoForn()],ativo:0,cat:mc.cat,criando:false,salvoEm:null};
+  mcApagarSalvo(mc.semId);
   mcPasso1();
 }
 
@@ -1664,7 +1696,7 @@ function mcSetDist(fi,ii,rid,v){
   const it=mc.forns[fi]?.itens[ii];if(!it)return;
   it.dist[rid]=v;
   const st=document.getElementById('mc-st-'+fi+'-'+ii);if(st)st.innerHTML=mcSituacao(it).html;
-  mcResumo();
+  mcResumo();mcSalvar();
 }
 // Botão "Completar": só age por clique do usuário, e só quando há exatamente uma loja vazia
 function mcRestante(fi,ii){
@@ -1674,6 +1706,7 @@ function mcRestante(fi,ii){
   if(falta<=0){toast('Este item já está todo distribuído');return;}
   if(vazias.length!==1){toast(vazias.length?'Deixe só uma loja vazia para completar, ou digite os valores':'Todas as lojas já têm quantidade');return;}
   it.dist[vazias[0].id]=String(falta);
+  mcSalvar();
   mcPasso2();
 }
 
@@ -1745,7 +1778,8 @@ async function mcCriar(){
     if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-check"></i> Criar os pedidos';}
     return;
   }
-  mc={semId:null,forns:[],ativo:0,cat:mc.cat,criando:false};
+  mcApagarSalvo(mc.semId);
+  mc={semId:null,forns:[],ativo:0,cat:mc.cat,criando:false,salvoEm:null};
   closeModal();
   toast(criados+' pedido(s) criado(s)!',3500);
 }
