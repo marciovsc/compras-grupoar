@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Pedido de cotação · Grupo AR</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#F5F6FA;color:#1C1E2E;font-size:15px}
+  .wrap{max-width:560px;margin:0 auto;padding:20px 16px 40px}
+  .card{background:#fff;border:1px solid #E8E9EF;border-radius:12px;padding:16px}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{font-size:13px;color:#6B7080;margin-bottom:14px;line-height:1.5}
+  .item{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid #E8E9EF}
+  .item:last-child{border-bottom:none}
+  .nome{flex:1;min-width:0}
+  .nome b{display:block;font-size:14px}
+  .nome span{font-size:12px;color:#6B7080}
+  .preco{display:flex;align-items:center;gap:4px;flex-shrink:0}
+  .preco small{font-size:12px;color:#6B7080}
+  input[type=text]{font:inherit;font-size:16px;padding:9px 10px;border:1px solid #D8DAE5;border-radius:8px;background:#fff;color:#1C1E2E}
+  .preco input{width:110px;text-align:right}
+  input:focus{outline:2px solid #3B6FE8;outline-offset:1px;border-color:#3B6FE8}
+  label{display:block;font-size:13px;color:#6B7080;margin:16px 0 6px}
+  .obs{width:100%}
+  button{width:100%;margin-top:18px;font:inherit;font-weight:600;font-size:16px;padding:13px;border:none;border-radius:10px;background:#3B6FE8;color:#fff;cursor:pointer}
+  button:disabled{opacity:.6}
+  .aviso{font-size:13px;padding:10px 12px;border-radius:8px;margin-bottom:14px;line-height:1.5}
+  .ok{background:rgba(26,138,85,.1);color:#1A8A55}
+  .erro{background:rgba(214,59,59,.09);color:#D63B3B}
+  .info{background:rgba(224,124,26,.1);color:#B5600F}
+  .rod{font-size:11px;color:#9DA3B4;text-align:center;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="app"><div class="sub">Carregando...</div></div>
+  <div class="rod">Centro de Distribuição · Grupo AR</div>
+</div>
+<script>
+// Página que o fornecedor abre pelo link da cotação (cotacao.html#CODIGO).
+// Só mostra e grava a cotação daquele código, pelas funções cot_ver e cot_responder do banco.
+const SUPA_URL='https://stlnoviutpgyouzoznxh.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN0bG5vdml1dHBneW91em96bnhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwMDc5MjgsImV4cCI6MjA5NjU4MzkyOH0.hf29q_EV2cM7oWO4m_o7_KN-eNQfC-hF5X171kznVTc';
+const supa=supabase.createClient(SUPA_URL,SUPA_KEY);
+const codigo=(location.hash||'').replace('#','').trim();
+const app=document.getElementById('app');
+let dados=null;
+
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function qtd(n){return String(Math.round(Number(n||0)*1000)/1000).replace('.',',');}
+function dh(v){if(!v)return'';const d=new Date(v);return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' às '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
+function parse(raw){raw=String(raw||'').trim().replace(/[^\d.,]/g,'');if(!raw)return null;const n=raw.includes(',')?parseFloat(raw.replace(/\./g,'').replace(',','.')):parseFloat(raw);return isNaN(n)?null:n;}
+function brl(n){return n==null?'':Number(n).toFixed(2).replace('.',',');}
+
+async function carregar(){
+  if(!codigo){app.innerHTML='<div class="aviso erro">Link incompleto. Peça um novo link ao Grupo AR.</div>';return;}
+  const {data,error}=await supa.rpc('cot_ver',{p_codigo:codigo});
+  if(error){app.innerHTML='<div class="aviso erro">Não foi possível abrir a cotação agora. Tente de novo em alguns minutos.</div>';return;}
+  if(!data){app.innerHTML='<div class="aviso erro">Este link não é válido ou foi cancelado. Peça um novo link ao Grupo AR.</div>';return;}
+  dados=data;render();
+}
+function render(msg){
+  const d=dados;const aberta=d.status==='Aberta';
+  let h='<h1>Pedido de cotação</h1>'
+    +'<div class="sub">Para: <b>'+esc((d.fornecedor||'').toUpperCase())+'</b>'+(d.prazo?'<br>Responder até '+dh(d.prazo):'')+'</div>';
+  if(msg)h+=msg;
+  if(!aberta)h+='<div class="aviso info">Esta cotação já foi encerrada. Obrigado!</div>';
+  else if(d.respondido_em&&!msg)h+='<div class="aviso ok">Você já mandou preços em '+dh(d.respondido_em)+'. Se quiser, pode corrigir e enviar de novo.</div>';
+  else if(!msg)h+='<div class="sub">Digite o preço por unidade de cada item. Deixe vazio o que não tiver.</div>';
+  h+=(d.itens||[]).map(it=>'<div class="item"><div class="nome"><b>'+esc(it.produto)+'</b><span>'+qtd(it.quantidade)+' '+esc(it.unidade||'')+'</span></div>'
+    +'<div class="preco"><small>R$</small><input type="text" inputmode="decimal" id="p-'+it.id+'" value="'+brl(it.preco)+'" placeholder="0,00" '+(aberta?'':'disabled')+'></div></div>').join('');
+  h+='<label for="obs">Observação (prazo de entrega, marca, etc.)</label><input type="text" id="obs" class="obs" value="'+esc(d.observacao||'')+'" '+(aberta?'':'disabled')+'>';
+  if(aberta)h+='<button id="enviar" onclick="enviar()">Enviar preços</button>';
+  app.innerHTML=h;
+}
+async function enviar(){
+  const btn=document.getElementById('enviar');
+  const precos=(dados.itens||[]).map(it=>({item_id:it.id,preco:parse(document.getElementById('p-'+it.id)?.value)}));
+  if(!precos.some(p=>p.preco!=null)){render('<div class="aviso erro">Preencha ao menos um preço antes de enviar.</div>');return;}
+  btn.disabled=true;btn.textContent='Enviando...';
+  const obs=(document.getElementById('obs')?.value||'').trim();
+  const {data,error}=await supa.rpc('cot_responder',{p_codigo:codigo,p_precos:precos,p_obs:obs});
+  if(error||data!=='ok'){
+    const txt=data==='cotacao_fechada'?'Esta cotação já foi encerrada.':data==='link_invalido'?'Este link não é mais válido.':'Não foi possível enviar agora. Tente de novo.';
+    btn.disabled=false;btn.textContent='Enviar preços';
+    const box=document.createElement('div');box.className='aviso erro';box.textContent=txt;app.prepend(box);return;
+  }
+  dados.itens.forEach(it=>{const p=precos.find(x=>x.item_id===it.id);it.preco=p?p.preco:null;});
+  dados.observacao=obs;dados.respondido_em=new Date().toISOString();
+  render('<div class="aviso ok"><b>Preços enviados. Obrigado!</b><br>Se precisar corrigir, é só mudar e enviar de novo.</div>');
+  window.scrollTo(0,0);
+}
+carregar();
+</script>
+</body>
+</html>
