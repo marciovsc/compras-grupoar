@@ -18,7 +18,7 @@ Atende os restaurantes **Arvo, Terra e Voar**. Dois módulos: **Compras** (alime
 - **Hospedagem:** GitHub Pages, repositório `marciovsc/compras-grupoar`, branch `main`.
   URL: https://marciovsc.github.io/compras-grupoar/
   (Cópia, com todo o histórico, do repositório original `marciocavalcantiar-cd/compras-grupo-ar`. Os dois usam o mesmo Supabase.)
-- **Arquivos do repositório:** `index.html` (principal), `app.html` (cópia idêntica, deve ser mantida igual ou removida) e `.nojekyll` (evita falha de build do Jekyll; não apagar).
+- **Arquivos do repositório:** `index.html` (principal), `app.html` (cópia idêntica, deve ser mantida igual ou removida), `cotacao.html` (página pública que o fornecedor abre pelo link da cotação) e `.nojekyll` (evita falha de build do Jekyll; não apagar).
 - Dados ficam em memória no objeto global `C` (`C.pedidos`, `C.itens`, `C.semanas`, `C.setores`, `C.locais_entrega`, etc.) e são recarregados por `reloadAll()`. Existe também sincronização automática a cada 60 segundos (`setInterval` + `refreshDados`).
 
 ## Banco de dados (Supabase)
@@ -59,6 +59,13 @@ Pontos de atenção:
 - Junta todos os itens da semana com aquele fornecedor, **independente de categoria ou de qual pedido** o item veio. A comparação do nome ignora maiúsculas/minúsculas e espaços nas pontas.
 - Separa por restaurante, cada um com o cabeçalho **"NOTA FISCAL EM NOME DE: RESTAURANTE"** e subtotal próprio.
 - Tem campo editável de "Local de entrega" no topo, fornecedor em maiúsculas, tabela sem quebra de linha e impressão em **A4 paisagem**.
+
+## Cotação de fornecedores
+
+- Botão **Cotação** no card da semana. Tabelas com prefixo `cot_`: `cot_fornecedores` (cadastro com WhatsApp), `cot_rodadas` (cada cotação, status Aberta/Fechada), `cot_itens` (`cotar` = vai para cotação; `fornecedor_escolhido`/`preco_escolhido` só gravados quando o usuário clica no preço), `cot_convites` (um por fornecedor, com `codigo` do link) e `cot_precos`. Coluna `produtos.fornecedor_fixo` (opcional).
+- Já existia no banco uma tabela `cotacoes` que não é do sistema. Não usar nem mexer.
+- O fornecedor responde em `cotacao.html#CODIGO`, que só usa as funções `cot_ver` e `cot_responder` (security definer) e vê apenas a própria cotação.
+- "Usar na compra" leva os itens escolhidos e os de fornecedor fixo para o **Montar compra** (passo de dividir entre as lojas).
 
 ## Espelho de recebimento e relatórios
 

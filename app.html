@@ -778,6 +778,7 @@ function renderSemanaCard(s,allPeds){
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <button class="btn btn-sm" onclick="event.stopPropagation();openNovoPedido('${s.id}')"><i class="ti ti-plus"></i> Pedido</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();openMontarCompra('${s.id}')" title="Montar a compra primeiro e escolher a loja depois"><i class="ti ti-basket"></i> Montar compra</button>
+        <button class="btn btn-sm" onclick="event.stopPropagation();openCotacoes('${s.id}')" title="Pedir preço aos fornecedores e comparar"><i class="ti ti-report-money"></i> Cotação</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();abrirFiltroRecibo(null,'${s.id}')" title="Gerar recibo para um fornecedor"><i class="ti ti-file-invoice"></i> Recibo</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();abrirFiltroEspelho('${s.id}')" title="Espelho para estoquista"><i class="ti ti-printer"></i> Espelho</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();editarSemana('${s.id}')"><i class="ti ti-pencil"></i></button>
@@ -1747,6 +1748,446 @@ async function mcCriar(){
   mc={semId:null,forns:[],ativo:0,cat:mc.cat,criando:false};
   closeModal();
   toast(criados+' pedido(s) criado(s)!',3500);
+}
+
+// ── COTAÇÃO DE FORNECEDORES ─────────────────────────
+// Tabelas no Supabase: cot_fornecedores (cadastro), cot_rodadas (cada cotação), cot_itens,
+// cot_convites (um por fornecedor, com o código do link) e cot_precos (respostas).
+// O fornecedor responde pela página cotacao.html#CODIGO (funções cot_ver e cot_responder).
+// Regra: nada é escolhido sozinho. O fornecedor vencedor só é gravado quando o usuário clica no preço.
+let ct={semId:null,itens:[],convidar:{},cat:'',titulo:'',prazo:'',salvando:false};
+let ctForns=[];
+let ctAb=null; // cotação aberta: {rodada,itens,convites,precos}
+
+async function ctCarregarForns(){
+  const {data,error}=await supa.from('cot_fornecedores').select('*').order('nome');
+  if(error){toast('Erro ao carregar fornecedores: '+error.message,4000);return false;}
+  ctForns=data||[];return true;
+}
+function ctLinkBase(){return location.href.split('#')[0].split('?')[0].replace(/[^\/]*$/,'')+'cotacao.html#';}
+function ctFone(w){let d=String(w||'').replace(/\D/g,'');if(!d)return'';if(d.length<=11)d='55'+d;return d;}
+function ctDH(v){if(!v)return'';const d=new Date(v);return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
+// aceita "1.234,50", "12,50" e "12.50"
+function ctParse(raw){raw=String(raw||'').trim();return raw.includes(',')?mcN(raw.replace(/\./g,'').replace(',','.')):mcN(raw);}
+function ctNorm(s){return String(s||'').trim().toLowerCase();}
+function ctTitulo(t){return '<div style="font-size:16px;font-weight:600;color:var(--c-text);margin:2px 0 4px;display:flex;align-items:center;gap:8px"><i class="ti ti-report-money" style="color:var(--c-accent);font-size:18px"></i> '+t+'</div>';}
+function ctErroBanco(error){
+  showModal(ctTitulo('Cotação')
+    +'<div style="font-size:13px;color:var(--c-red);margin:10px 0">Não consegui ler as tabelas de cotação no banco: '+mcEsc(error.message)+'</div>'
+    +'<div style="font-size:12px;color:var(--c-dim)">Confira se o comando de cotação foi rodado no Supabase.</div>'
+    +'<div class="g8" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeModal()">Fechar</button></div>');
+}
+
+// Lista das cotações da semana
+async function openCotacoes(semId){
+  showModal(ctTitulo('Cotação')+'<div style="font-size:13px;color:var(--c-dim);padding:14px 0">Carregando...</div>');
+  const sem=C.semanas.find(s=>s.id===semId);
+  const r=await supa.from('cot_rodadas').select('*').eq('semana_id',String(semId)).order('criado_em',{ascending:false});
+  if(r.error){ctErroBanco(r.error);return;}
+  const rods=r.data||[];
+  const cont={};
+  if(rods.length){
+    const {data:cv}=await supa.from('cot_convites').select('rodada_id,respondido_em').in('rodada_id',rods.map(x=>x.id));
+    (cv||[]).forEach(c=>{const k=cont[c.rodada_id]=cont[c.rodada_id]||{t:0,r:0};k.t++;if(c.respondido_em)k.r++;});
+  }
+  const temRascunho=ct.semId===semId&&ct.itens.length;
+  const linhas=rods.length?rods.map(x=>{
+    const k=cont[x.id]||{t:0,r:0};
+    const st=x.status==='Aberta'?'<span style="color:var(--c-orange);font-weight:600">Aberta</span>':'<span style="color:var(--c-dim);font-weight:600">Fechada</span>';
+    return '<tr style="cursor:pointer" onclick="ctAbrir(\''+x.id+'\')">'
+      +'<td style="font-size:13px;font-weight:600">'+mcEsc(x.titulo||'Cotação')+'</td>'
+      +'<td style="font-size:12px;color:var(--c-dim);white-space:nowrap">'+ctDH(x.criado_em)+'</td>'
+      +'<td style="font-size:12px">'+st+'</td>'
+      +'<td style="font-size:12px;white-space:nowrap">'+k.r+' de '+k.t+' responderam</td>'
+      +'<td><button class="btn btn-xs btn-xs-acc">Abrir</button></td></tr>';
+  }).join(''):'<tr><td colspan="5" style="font-size:13px;color:var(--c-dim);padding:14px">Nenhuma cotação nesta semana ainda.</td></tr>';
+  showModal(ctTitulo('Cotação')
+    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+(sem?semLabel(sem):'')+'</div>'
+    +'<div style="overflow-x:auto"><table class="ped-table"><thead><tr><th>Cotação</th><th>Criada em</th><th>Situação</th><th>Respostas</th><th></th></tr></thead><tbody>'+linhas+'</tbody></table></div>'
+    +'<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;border-top:1px solid var(--c-border);padding-top:12px;margin-top:14px">'
+      +'<button class="btn" onclick="ctFornecedores(function(){openCotacoes(\''+semId+'\')})"><i class="ti ti-address-book"></i> Fornecedores</button>'
+      +'<div class="g8"><button class="btn" onclick="closeModal()">Fechar</button>'
+      +'<button class="btn btn-acc" onclick="ctNova(\''+semId+'\')"><i class="ti ti-plus"></i> '+(temRascunho?'Continuar nova cotação':'Nova cotação')+'</button></div>'
+    +'</div>',{wide:true});
+}
+
+// Cadastro de fornecedores (nome, WhatsApp, e-mail)
+let ctVoltar=null;
+async function ctFornecedores(voltar){
+  if(voltar)ctVoltar=voltar;
+  if(!await ctCarregarForns())return;
+  const linhas=ctForns.filter(f=>f.ativo!==false).map(f=>'<tr>'
+    +'<td><input id="cf-n-'+f.id+'" type="text" value="'+mcEsc(f.nome)+'" style="width:100%;min-width:160px;padding:5px 8px;font-size:12px;font-weight:600"></td>'
+    +'<td><input id="cf-w-'+f.id+'" type="tel" value="'+mcEsc(f.whatsapp)+'" placeholder="(81) 99999-0000" style="width:150px;padding:5px 8px;font-size:12px"></td>'
+    +'<td><input id="cf-e-'+f.id+'" type="email" value="'+mcEsc(f.email)+'" placeholder="opcional" style="width:180px;padding:5px 8px;font-size:12px"></td>'
+    +'<td style="white-space:nowrap"><button class="btn btn-xs btn-xs-acc" onclick="ctSalvarForn(\''+f.id+'\')">Salvar</button> '
+    +'<button class="btn btn-xs" style="color:var(--c-red)" onclick="ctRemoverForn(\''+f.id+'\')" title="Tirar da lista de fornecedores">Remover</button></td></tr>').join('');
+  showModal(ctTitulo('Fornecedores')
+    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">Cadastre uma vez com o WhatsApp. Eles aparecem para escolher em cada cotação.</div>'
+    +'<div style="overflow-x:auto"><table class="ped-table"><thead><tr><th>Nome</th><th>WhatsApp</th><th>E-mail</th><th></th></tr></thead><tbody>'
+    +(linhas||'<tr><td colspan="4" style="font-size:13px;color:var(--c-dim);padding:12px">Nenhum fornecedor cadastrado ainda.</td></tr>')
+    +'<tr style="background:var(--c-bg)"><td><input id="cf-n-novo" type="text" placeholder="Nome do novo fornecedor" style="width:100%;min-width:160px;padding:5px 8px;font-size:12px"></td>'
+    +'<td><input id="cf-w-novo" type="tel" placeholder="(81) 99999-0000" style="width:150px;padding:5px 8px;font-size:12px"></td>'
+    +'<td><input id="cf-e-novo" type="email" placeholder="opcional" style="width:180px;padding:5px 8px;font-size:12px"></td>'
+    +'<td><button class="btn btn-xs btn-xs-acc" onclick="ctSalvarForn(null)"><i class="ti ti-plus"></i> Adicionar</button></td></tr>'
+    +'</tbody></table></div>'
+    +'<div class="g8" style="justify-content:flex-end;border-top:1px solid var(--c-border);padding-top:12px;margin-top:14px">'
+    +'<button class="btn" onclick="ctVoltarDeForn()"><i class="ti ti-arrow-left"></i> Voltar</button></div>',{wide:true});
+}
+function ctVoltarDeForn(){const v=ctVoltar;ctVoltar=null;if(v)v();else closeModal();}
+async function ctSalvarForn(id){
+  const k=id||'novo';
+  const nome=(document.getElementById('cf-n-'+k)?.value||'').trim();
+  const whatsapp=(document.getElementById('cf-w-'+k)?.value||'').trim()||null;
+  const email=(document.getElementById('cf-e-'+k)?.value||'').trim()||null;
+  if(!nome){toast('Digite o nome do fornecedor');return;}
+  const dup=ctForns.find(f=>f.id!==id&&ctNorm(f.nome)===ctNorm(nome));
+  let res;
+  if(id){res=await supa.from('cot_fornecedores').update({nome,whatsapp,email}).eq('id',id);}
+  else if(dup){res=await supa.from('cot_fornecedores').update({whatsapp,email,ativo:true}).eq('id',dup.id);}
+  else{res=await supa.from('cot_fornecedores').insert({nome,whatsapp,email});}
+  if(res.error){toast('Erro ao salvar: '+res.error.message,4000);return;}
+  toast('Fornecedor "'+nome.toUpperCase()+'" salvo');
+  ctFornecedores();
+}
+async function ctRemoverForn(id){
+  const f=ctForns.find(x=>x.id===id);if(!f)return;
+  if(!confirm('Tirar '+f.nome.toUpperCase()+' da lista de fornecedores? As cotações antigas não mudam.'))return;
+  const {error}=await supa.from('cot_fornecedores').update({ativo:false}).eq('id',id);
+  if(error){toast('Erro: '+error.message,4000);return;}
+  ctFornecedores();
+}
+
+// Nova cotação: escolher produtos, separar fixo x cotar, escolher quem recebe
+async function ctNova(semId){
+  if(ct.semId!==semId){
+    const sem=C.semanas.find(s=>s.id===semId);
+    const hoje=new Date();
+    ct={semId,itens:[],convidar:{},cat:'',titulo:'Cotação '+hoje.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}),prazo:'',salvando:false};
+  }
+  if(!ct.cat||!C.categorias.find(c=>c.nome===ct.cat))ct.cat=C.categorias[0]?.nome||'';
+  if(!await ctCarregarForns())return;
+  const sem=C.semanas.find(s=>s.id===semId);
+  showModal(`
+    ${ctTitulo('Nova cotação')}
+    <div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">${sem?semLabel(sem):''}</div>
+    <div class="grid2f" style="margin-bottom:12px">
+      <div class="field"><label>Nome da cotação</label><input id="ct-tit" type="text" value="${mcEsc(ct.titulo)}" oninput="ct.titulo=this.value" style="width:100%"></div>
+      <div class="field"><label>Responder até (opcional)</label><input id="ct-prazo" type="datetime-local" value="${mcEsc(ct.prazo)}" onchange="ct.prazo=this.value" style="width:100%"></div>
+    </div>
+    <div style="font-size:11px;font-weight:600;color:var(--c-dim);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">1. Produtos</div>
+    <div id="ct-itens" style="margin-bottom:10px"></div>
+    <div style="background:var(--c-bg);border:1px solid var(--c-border);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+      <div id="ct-pills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
+      <input id="ct-s" type="text" placeholder="Digite para filtrar..." oninput="ctFiltrar()" style="width:100%;margin-bottom:10px">
+      <div class="prod-list" id="ct-list"></div>
+    </div>
+    <div style="font-size:11px;font-weight:600;color:var(--c-dim);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">2. Quem vai receber o pedido de preço</div>
+    <div id="ct-conv" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px"></div>
+    <button class="btn btn-sm" onclick="ctFornecedores(function(){ctNova('${semId}')})"><i class="ti ti-address-book"></i> Cadastrar ou editar fornecedores</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--c-border);padding-top:12px;margin-top:14px">
+      <span id="ct-resumo" style="font-size:12px;color:var(--c-dim)"></span>
+      <div class="g8">
+        <button class="btn" onclick="openCotacoes('${semId}')"><i class="ti ti-arrow-left"></i> Voltar</button>
+        <button class="btn btn-acc" id="ct-criar" onclick="ctCriar()"><i class="ti ti-check"></i> Criar cotação</button>
+      </div>
+    </div>`,{wide:true});
+  ctRenderItens();ctRenderPills();ctFiltrar();ctRenderConv();
+}
+function ctOpcoesForn(atual){
+  const nomes=ctForns.filter(f=>f.ativo!==false).map(f=>f.nome);
+  if(atual&&atual!=='cotar'&&!nomes.some(n=>ctNorm(n)===ctNorm(atual)))nomes.unshift(atual);
+  return '<option value="cotar"'+(atual==='cotar'?' selected':'')+'>Precisa cotar</option>'
+    +nomes.map(n=>'<option value="'+mcEsc(n)+'"'+(ctNorm(n)===ctNorm(atual)?' selected':'')+'>Fixo: '+mcEsc(n.toUpperCase())+'</option>').join('');
+}
+function ctRenderItens(){
+  const el=document.getElementById('ct-itens');if(!el)return;
+  if(!ct.itens.length){el.innerHTML='<div style="font-size:12px;color:var(--c-dim);padding:6px 0">Nenhum produto ainda. Marque os produtos na lista abaixo.</div>';ctResumo();return;}
+  el.innerHTML='<div style="overflow-x:auto"><table class="ped-table"><thead><tr><th>Produto</th><th>Unid.</th><th>Qtd. total</th><th>Situação</th><th></th><th></th></tr></thead><tbody>'
+    +ct.itens.map((it,i)=>{
+      const p=C.produtos.find(x=>x.id===it.pid);
+      const fixoProd=p?.fornecedor_fixo||'';
+      let fixar='';
+      if(it.modo!=='cotar'&&ctNorm(fixoProd)!==ctNorm(it.modo))fixar='<button class="btn btn-xs" onclick="ctFixar('+i+')" title="Guardar este fornecedor como fixo do produto, para as próximas vezes">Guardar como fixo</button>';
+      else if(fixoProd)fixar='<button class="btn btn-xs" onclick="ctDesfixar('+i+')" title="Este produto tem fornecedor fixo: '+mcEsc(fixoProd)+'. Clique para tirar.">Tirar fixo do produto</button>';
+      return '<tr>'
+        +'<td style="font-size:12px">'+mcEsc(it.nome)+'</td>'
+        +'<td style="font-size:12px;color:var(--c-dim)">'+mcEsc(it.unidade)+'</td>'
+        +'<td><input type="number" min="0" step="0.5" value="'+mcEsc(it.qty)+'" onchange="ct.itens['+i+'].qty=this.value;ctResumo()" style="width:80px;padding:4px 8px;font-size:12px"></td>'
+        +'<td><select onchange="ctSetModo('+i+',this.value)" style="width:auto;min-width:170px;padding:4px 8px;font-size:12px;font-weight:600;color:'+(it.modo==='cotar'?'var(--c-orange)':'var(--c-green)')+'">'+ctOpcoesForn(it.modo)+'</select></td>'
+        +'<td>'+fixar+'</td>'
+        +'<td><span style="cursor:pointer;color:var(--c-red)" title="Tirar item" onclick="ctRemItem('+i+')">&#x2715;</span></td></tr>';
+    }).join('')+'</tbody></table></div>';
+  ctResumo();
+}
+function ctResumo(){
+  const el=document.getElementById('ct-resumo');if(!el)return;
+  const cot=ct.itens.filter(i=>i.modo==='cotar').length;
+  const conv=Object.keys(ct.convidar).filter(k=>ct.convidar[k]).length;
+  el.textContent=(ct.itens.length-cot)+' com fornecedor fixo · '+cot+' para cotar · '+conv+' fornecedor(es) vão receber';
+}
+function ctRenderPills(){
+  const el=document.getElementById('ct-pills');if(!el)return;
+  el.innerHTML=C.categorias.map((c,i)=>{const a=c.nome===ct.cat;
+    return '<button class="cat-pill'+(a?' active':'')+'" onclick="ctSetCat('+i+')" style="'+(a?'background:'+(c.cor||'var(--c-accent)')+';color:#FFFFFF;border-color:transparent':'')+'">'+mcEsc(c.nome)+'</button>';}).join('');
+}
+function ctSetCat(i){ct.cat=C.categorias[i]?.nome||'';ctRenderPills();ctFiltrar();}
+function ctFiltrar(){
+  const el=document.getElementById('ct-list');if(!el)return;
+  const q=(document.getElementById('ct-s')?.value||'').toLowerCase();
+  const sel=new Set(ct.itens.map(i=>i.pid));
+  const lista=C.produtos.filter(p=>p.categoria===ct.cat&&(p.nome||'').toLowerCase().includes(q));
+  el.innerHTML=lista.length?lista.map(p=>'<div class="prod-row">'
+      +'<input type="checkbox" '+(sel.has(p.id)?'checked':'')+' onchange="ctToggleProd(\''+p.id+'\')" style="flex-shrink:0;width:16px;height:16px;accent-color:var(--c-accent)">'
+      +'<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+mcEsc(p.nome)+'</span>'
+      +(p.fornecedor_fixo?'<span style="font-size:10px;color:var(--c-green);flex-shrink:0;margin-left:6px">fixo: '+mcEsc(p.fornecedor_fixo.toUpperCase())+'</span>':'')
+      +'<span style="font-size:11px;color:var(--c-dim);flex-shrink:0;margin-left:8px;background:var(--c-white);padding:2px 6px;border-radius:4px">'+mcEsc(p.unidade)+'</span>'
+    +'</div>').join('')
+    :'<div style="font-size:13px;color:var(--c-dim);padding:12px 0;text-align:center">Nenhum produto nesta categoria</div>';
+}
+function ctToggleProd(pid){
+  const idx=ct.itens.findIndex(i=>i.pid===pid);
+  if(idx>=0)ct.itens.splice(idx,1);
+  else{const p=C.produtos.find(x=>x.id===pid);if(!p)return;
+    ct.itens.push({pid:p.id,nome:p.nome,unidade:p.unidade,categoria:p.categoria,qty:'',modo:p.fornecedor_fixo?p.fornecedor_fixo:'cotar'});}
+  ctRenderItens();
+}
+function ctRemItem(i){ct.itens.splice(i,1);ctRenderItens();ctFiltrar();}
+function ctSetModo(i,v){if(!ct.itens[i])return;ct.itens[i].modo=v;ctRenderItens();}
+async function ctFixar(i){
+  const it=ct.itens[i];if(!it||it.modo==='cotar')return;
+  const {error}=await supa.from('produtos').update({fornecedor_fixo:it.modo}).eq('id',it.pid);
+  if(error){toast('Erro ao guardar: '+error.message,4000);return;}
+  C.produtos=C.produtos.map(p=>p.id===it.pid?{...p,fornecedor_fixo:it.modo}:p);
+  toast('"'+it.nome+'" agora tem fornecedor fixo: '+it.modo.toUpperCase());
+  ctRenderItens();ctFiltrar();
+}
+async function ctDesfixar(i){
+  const it=ct.itens[i];if(!it)return;
+  const {error}=await supa.from('produtos').update({fornecedor_fixo:null}).eq('id',it.pid);
+  if(error){toast('Erro: '+error.message,4000);return;}
+  C.produtos=C.produtos.map(p=>p.id===it.pid?{...p,fornecedor_fixo:null}:p);
+  toast('"'+it.nome+'" não tem mais fornecedor fixo');
+  ctRenderItens();ctFiltrar();
+}
+function ctRenderConv(){
+  const el=document.getElementById('ct-conv');if(!el)return;
+  const at=ctForns.filter(f=>f.ativo!==false);
+  el.innerHTML=at.length?at.map(f=>'<label style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1px solid var(--c-border);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;background:var(--c-white)">'
+      +'<input type="checkbox" '+(ct.convidar[f.id]?'checked':'')+' onchange="ct.convidar[\''+f.id+'\']=this.checked;ctResumo()" style="width:16px;height:16px;flex-shrink:0;margin:0;accent-color:var(--c-accent)">'
+      +'<b>'+mcEsc(f.nome.toUpperCase())+'</b>'+(f.whatsapp?'':' <span style="color:var(--c-orange)">(sem WhatsApp)</span>')+'</label>').join('')
+    :'<span style="font-size:12px;color:var(--c-dim)">Nenhum fornecedor cadastrado. Clique abaixo para cadastrar.</span>';
+}
+async function ctCriar(){
+  if(ct.salvando)return;
+  if(!ct.itens.length){alert('Adicione ao menos um produto.');return;}
+  const semQtd=ct.itens.filter(i=>mcN(i.qty)<=0).map(i=>i.nome);
+  if(semQtd.length){alert('Preencha a quantidade destes produtos:\n\n• '+semQtd.join('\n• '));return;}
+  const cotar=ct.itens.filter(i=>i.modo==='cotar');
+  const conv=ctForns.filter(f=>ct.convidar[f.id]&&f.ativo!==false);
+  if(cotar.length&&!conv.length){alert('Marque ao menos um fornecedor para receber o pedido de preço.');return;}
+  if(!cotar.length&&!confirm('Nenhum item está marcado como "Precisa cotar". Criar mesmo assim?'))return;
+  ct.salvando=true;
+  const btn=document.getElementById('ct-criar');if(btn){btn.disabled=true;btn.textContent='Criando...';}
+  const fim=()=>{ct.salvando=false;if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-check"></i> Criar cotação';}};
+  const {data:rod,error}=await supa.from('cot_rodadas').insert({
+    semana_id:String(ct.semId),titulo:(ct.titulo||'').trim()||'Cotação',prazo:ct.prazo?new Date(ct.prazo).toISOString():null,status:'Aberta'
+  }).select().single();
+  if(error||!rod){toast('Erro ao criar cotação: '+(error?.message||''),4000);fim();return;}
+  const {error:e2}=await supa.from('cot_itens').insert(ct.itens.map((it,i)=>({
+    rodada_id:rod.id,produto:it.nome,categoria:it.categoria,unidade:it.unidade,quantidade:mcN(it.qty),ordem:i,
+    cotar:it.modo==='cotar',fornecedor_escolhido:it.modo==='cotar'?null:it.modo
+  })));
+  if(e2){toast('Erro ao salvar os itens: '+e2.message,5000);fim();return;}
+  if(conv.length){
+    const {error:e3}=await supa.from('cot_convites').insert(conv.map(f=>({rodada_id:rod.id,fornecedor:f.nome,whatsapp:f.whatsapp})));
+    if(e3){toast('Erro ao salvar os fornecedores: '+e3.message,5000);fim();return;}
+  }
+  ct={semId:null,itens:[],convidar:{},cat:ct.cat,titulo:'',prazo:'',salvando:false};
+  toast('Cotação criada!');
+  ctAbrir(rod.id);
+}
+
+// Abrir uma cotação: enviar links, ver respostas, comparar e escolher
+async function ctCarregar(id){
+  const [r,i,c]=await Promise.all([
+    supa.from('cot_rodadas').select('*').eq('id',id).single(),
+    supa.from('cot_itens').select('*').eq('rodada_id',id).order('ordem'),
+    supa.from('cot_convites').select('*').eq('rodada_id',id).order('criado_em')
+  ]);
+  if(r.error){ctErroBanco(r.error);return false;}
+  const convites=c.data||[];
+  let precos=[];
+  if(convites.length){const p=await supa.from('cot_precos').select('*').in('convite_id',convites.map(x=>x.id));precos=p.data||[];}
+  ctAb={rodada:r.data,itens:i.data||[],convites,precos};
+  return true;
+}
+function ctPreco(itemId,conviteId){const p=ctAb.precos.find(x=>x.item_id===itemId&&x.convite_id===conviteId);return p&&p.preco!=null?Number(p.preco):null;}
+function ctMensagem(cv){
+  const n=ctAb.itens.filter(i=>i.cotar!==false).length;
+  const pz=ctAb.rodada.prazo?' até '+ctDH(ctAb.rodada.prazo):'';
+  return 'Olá! Aqui é do Centro de Distribuição do Grupo AR.\nPode me passar o preço de '+n+' ite'+(n===1?'m':'ns')+pz+'?\nÉ só abrir o link e preencher:\n\n'+ctLinkBase()+cv.codigo+'\n\nObrigado!';
+}
+async function ctAbrir(id){
+  showModal(ctTitulo('Cotação')+'<div style="font-size:13px;color:var(--c-dim);padding:14px 0">Carregando...</div>',{wide:true});
+  if(!await ctCarregar(id))return;
+  await ctCarregarForns();
+  ctRenderAberta();
+}
+function ctRenderAberta(){
+  const {rodada,itens,convites}=ctAb;
+  const sem=C.semanas.find(s=>String(s.id)===String(rodada.semana_id));
+  const aberta=rodada.status==='Aberta';
+  const cotar=itens.filter(i=>i.cotar!==false);
+  const fixos=itens.filter(i=>i.cotar===false);
+  // 1) Envio
+  const env=convites.length?convites.map(cv=>{
+    const fone=ctFone(cv.whatsapp);
+    const wa=fone?'<a class="btn btn-xs" style="background:#1F9D55;color:#fff;border-color:#1F9D55;text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/'+fone+'?text='+encodeURIComponent(ctMensagem(cv))+'"><i class="ti ti-brand-whatsapp"></i> WhatsApp</a>':'<span style="font-size:11px;color:var(--c-orange)">sem WhatsApp</span>';
+    const st=cv.respondido_em?'<span style="color:var(--c-green);font-weight:600">Respondeu '+ctDH(cv.respondido_em)+'</span>':'<span style="color:var(--c-dim)">Aguardando resposta</span>';
+    return '<tr><td style="font-size:13px;font-weight:600">'+mcEsc(cv.fornecedor.toUpperCase())+'</td>'
+      +'<td style="font-size:12px">'+st+(cv.observacao?'<div style="font-size:11px;color:var(--c-dim);white-space:normal;max-width:260px">Obs.: '+mcEsc(cv.observacao)+'</div>':'')+'</td>'
+      +'<td style="white-space:nowrap">'+wa+' <button class="btn btn-xs" onclick="ctCopiar(\''+cv.id+'\',this)">Copiar mensagem</button> '
+      +'<button class="btn btn-xs" onclick="ctDigitar(\''+cv.id+'\')" title="Digitar os preços que ele mandou por mensagem">Digitar preços</button> '
+      +'<button class="btn btn-xs" style="color:var(--c-red)" onclick="ctTirarConvite(\''+cv.id+'\')" title="Tirar este fornecedor da cotação">&#x2715;</button></td></tr>';
+  }).join(''):'<tr><td colspan="3" style="font-size:12px;color:var(--c-dim);padding:10px">Nenhum fornecedor nesta cotação.</td></tr>';
+  const jaConv=new Set(convites.map(c=>ctNorm(c.fornecedor)));
+  const disp=ctForns.filter(f=>f.ativo!==false&&!jaConv.has(ctNorm(f.nome)));
+  const addConv=disp.length?'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px"><select id="ct-add-conv" style="width:auto;min-width:200px;padding:5px 8px;font-size:12px">'+disp.map(f=>'<option value="'+f.id+'">'+mcEsc(f.nome.toUpperCase())+'</option>').join('')+'</select><button class="btn btn-xs" onclick="ctAddConvite()"><i class="ti ti-plus"></i> Incluir na cotação</button></div>':'';
+  // 2) Comparação
+  let soma=0,escolhidos=0;
+  const cab='<tr><th>Produto</th><th>Qtd.</th>'+convites.map(cv=>'<th>'+mcEsc(cv.fornecedor.toUpperCase())+'</th>').join('')+'<th>Escolhido</th></tr>';
+  const lin=cotar.map(it=>{
+    const ps=convites.map(cv=>ctPreco(it.id,cv.id));
+    const val=ps.filter(v=>v!=null&&v>0);const min=val.length?Math.min(...val):null;
+    const cells=convites.map((cv,k)=>{
+      const v=ps[k];
+      if(v==null)return '<td style="color:var(--c-dim2)">—</td>';
+      const esc=ctNorm(it.fornecedor_escolhido)===ctNorm(cv.fornecedor);
+      const st=esc?'outline:2px solid var(--c-accent);background:var(--c-accent-bg);color:var(--c-accent);font-weight:700'
+        :(v===min?'background:var(--c-green-bg);color:var(--c-green);font-weight:700':'');
+      return '<td><span onclick="ctEscolher(\''+it.id+'\',\''+cv.id+'\')" title="Clique para escolher este preço" style="cursor:pointer;border-radius:6px;padding:3px 7px;display:inline-block;white-space:nowrap;'+st+'">'+fmt(v)+'</span></td>';
+    }).join('');
+    let fim='<td style="font-size:12px;color:var(--c-dim2)">clique num preço</td>';
+    if(it.fornecedor_escolhido){
+      const t=mcN(it.preco_escolhido)*mcN(it.quantidade);soma+=t;escolhidos++;
+      fim='<td style="font-size:12px;white-space:nowrap"><b>'+fmt(t)+'</b><div style="font-size:11px;color:var(--c-dim)">'+mcEsc(it.fornecedor_escolhido.toUpperCase())+'</div></td>';
+    }
+    return '<tr><td style="font-size:12px">'+mcEsc(it.produto)+'</td><td style="font-size:12px;white-space:nowrap">'+mcQ(mcN(it.quantidade))+' '+mcEsc(it.unidade)+'</td>'+cells+fim+'</tr>';
+  }).join('');
+  const tabComp=cotar.length?'<div style="overflow-x:auto"><table class="ped-table"><thead>'+cab+'</thead><tbody>'+lin+'</tbody></table></div>':'<div style="font-size:12px;color:var(--c-dim)">Nenhum item para cotar.</div>';
+  const tabFixos=fixos.length?'<div style="font-size:11px;font-weight:600;color:var(--c-dim);text-transform:uppercase;letter-spacing:0.05em;margin:14px 0 6px">Itens com fornecedor fixo (não vão para cotação)</div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap">'+fixos.map(it=>'<span style="font-size:12px;background:var(--c-green-bg);color:var(--c-green);border-radius:12px;padding:3px 10px">'+mcEsc(it.produto)+' · '+mcQ(mcN(it.quantidade))+' '+mcEsc(it.unidade)+' · <b>'+mcEsc((it.fornecedor_escolhido||'').toUpperCase())+'</b></span>').join('')+'</div>':'';
+  showModal(ctTitulo(mcEsc(rodada.titulo||'Cotação'))
+    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+(sem?semLabel(sem)+' · ':'')+(rodada.prazo?'responder até '+ctDH(rodada.prazo)+' · ':'')
+      +(aberta?'<b style="color:var(--c-orange)">Aberta</b> (fornecedores podem responder)':'<b>Fechada</b> (o link não aceita mais preços)')+'</div>'
+    +'<div style="font-size:11px;font-weight:600;color:var(--c-dim);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">1. Enviar o link para cada fornecedor</div>'
+    +'<div style="overflow-x:auto"><table class="ped-table"><tbody>'+env+'</tbody></table></div>'+addConv
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:18px 0 6px">'
+      +'<span style="font-size:11px;font-weight:600;color:var(--c-dim);text-transform:uppercase;letter-spacing:0.05em">2. Comparar e escolher (clique no preço)</span>'
+      +'<span style="font-size:11px;color:var(--c-dim);display:flex;gap:10px;flex-wrap:wrap"><span><b style="color:var(--c-green)">verde</b> = menor preço</span><span><b style="color:var(--c-accent)">azul</b> = escolhido por você</span></span></div>'
+    +tabComp+tabFixos
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--c-border);padding-top:12px;margin-top:14px">'
+      +'<span style="font-size:12px;color:var(--c-dim)">'+escolhidos+' de '+cotar.length+' itens escolhidos · total <b style="color:var(--c-text);white-space:nowrap">'+fmt(soma)+'</b></span>'
+      +'<div class="g8" style="flex-wrap:wrap">'
+        +'<button class="btn" onclick="openCotacoes(\''+rodada.semana_id+'\')"><i class="ti ti-arrow-left"></i> Voltar</button>'
+        +'<button class="btn" onclick="ctAbrir(\''+rodada.id+'\')" title="Buscar respostas novas"><i class="ti ti-refresh"></i> Atualizar</button>'
+        +'<button class="btn" onclick="ctStatus()">'+(aberta?'<i class="ti ti-lock"></i> Fechar cotação':'<i class="ti ti-lock-open"></i> Reabrir')+'</button>'
+        +'<button class="btn btn-acc" onclick="ctUsarNaCompra()"><i class="ti ti-basket"></i> Usar na compra</button>'
+      +'</div></div>',{wide:true});
+}
+function ctCopiar(cvId,btn){
+  const cv=ctAb.convites.find(x=>x.id===cvId);if(!cv)return;
+  const txt=ctMensagem(cv);
+  const ok=()=>{if(btn)btn.textContent='Copiado ✓';};
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(ok).catch(()=>prompt('Copie a mensagem:',txt));
+  else prompt('Copie a mensagem:',txt);
+}
+async function ctEscolher(itemId,cvId){
+  if(!ctAb)return;
+  const it=ctAb.itens.find(x=>x.id===itemId);const cv=ctAb.convites.find(x=>x.id===cvId);if(!it||!cv)return;
+  const desmarcar=ctNorm(it.fornecedor_escolhido)===ctNorm(cv.fornecedor);
+  const upd=desmarcar?{fornecedor_escolhido:null,preco_escolhido:null}:{fornecedor_escolhido:cv.fornecedor,preco_escolhido:ctPreco(itemId,cvId)};
+  const {error}=await supa.from('cot_itens').update(upd).eq('id',itemId);
+  if(error){toast('Erro ao escolher: '+error.message,4000);return;}
+  Object.assign(it,upd);
+  ctRenderAberta();
+}
+async function ctAddConvite(){
+  const id=document.getElementById('ct-add-conv')?.value;const f=ctForns.find(x=>x.id===id);if(!f)return;
+  const {error}=await supa.from('cot_convites').insert({rodada_id:ctAb.rodada.id,fornecedor:f.nome,whatsapp:f.whatsapp});
+  if(error){toast('Erro: '+error.message,4000);return;}
+  toast(f.nome.toUpperCase()+' incluído. Agora envie o link para ele.');
+  ctAbrir(ctAb.rodada.id);
+}
+async function ctTirarConvite(cvId){
+  const cv=ctAb.convites.find(x=>x.id===cvId);if(!cv)return;
+  if(!confirm('Tirar '+cv.fornecedor.toUpperCase()+' desta cotação? Os preços que ele mandou nesta cotação serão apagados e o link dele para de funcionar.'))return;
+  const {error}=await supa.from('cot_convites').delete().eq('id',cvId);
+  if(error){toast('Erro: '+error.message,4000);return;}
+  ctAbrir(ctAb.rodada.id);
+}
+async function ctStatus(){
+  const aberta=ctAb.rodada.status==='Aberta';
+  if(aberta&&!confirm('Fechar esta cotação? Os fornecedores não vão mais conseguir mandar preços pelo link.'))return;
+  const novo=aberta?'Fechada':'Aberta';
+  const {error}=await supa.from('cot_rodadas').update({status:novo}).eq('id',ctAb.rodada.id);
+  if(error){toast('Erro: '+error.message,4000);return;}
+  ctAb.rodada.status=novo;ctRenderAberta();
+}
+function ctDigitar(cvId){
+  const cv=ctAb.convites.find(x=>x.id===cvId);if(!cv)return;
+  const cotar=ctAb.itens.filter(i=>i.cotar!==false);
+  showModal(ctTitulo('Preços de '+mcEsc(cv.fornecedor.toUpperCase()))
+    +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">Para quando o fornecedor responde por mensagem. Deixe vazio o que ele não tem.</div>'
+    +'<div style="overflow-x:auto"><table class="ped-table"><thead><tr><th>Produto</th><th>Qtd.</th><th>Preço unit. (R$)</th></tr></thead><tbody>'
+    +cotar.map(it=>{const v=ctPreco(it.id,cvId);return '<tr><td style="font-size:12px">'+mcEsc(it.produto)+'</td><td style="font-size:12px;white-space:nowrap">'+mcQ(mcN(it.quantidade))+' '+mcEsc(it.unidade)+'</td>'
+      +'<td><input id="ctp-'+it.id+'" type="text" inputmode="decimal" value="'+(v!=null?String(v).replace('.',','):'')+'" placeholder="0,00" style="width:100px;padding:4px 8px;font-size:12px"></td></tr>';}).join('')
+    +'</tbody></table></div>'
+    +'<div class="g8" style="justify-content:flex-end;border-top:1px solid var(--c-border);padding-top:12px;margin-top:14px">'
+    +'<button class="btn" onclick="ctRenderAberta()">Cancelar</button>'
+    +'<button class="btn btn-acc" onclick="ctSalvarDigitados(\''+cvId+'\')"><i class="ti ti-check"></i> Salvar preços</button></div>',{wide:true});
+}
+async function ctSalvarDigitados(cvId){
+  const cotar=ctAb.itens.filter(i=>i.cotar!==false);
+  const rows=[],apagar=[];
+  cotar.forEach(it=>{
+    const raw=(document.getElementById('ctp-'+it.id)?.value||'').trim();
+    if(raw===''){if(ctPreco(it.id,cvId)!=null)apagar.push(it.id);return;}
+    rows.push({convite_id:cvId,item_id:it.id,preco:ctParse(raw),atualizado_em:new Date().toISOString()});
+  });
+  if(rows.length){const {error}=await supa.from('cot_precos').upsert(rows,{onConflict:'convite_id,item_id'});if(error){toast('Erro ao salvar: '+error.message,4000);return;}}
+  if(apagar.length){const {error}=await supa.from('cot_precos').delete().eq('convite_id',cvId).in('item_id',apagar);if(error){toast('Erro: '+error.message,4000);return;}}
+  toast('Preços salvos');
+  ctAbrir(ctAb.rodada.id);
+}
+// Leva os itens escolhidos (e os de fornecedor fixo) para o "Montar compra", onde se divide entre as lojas
+function ctUsarNaCompra(){
+  const {rodada,itens}=ctAb;
+  const prontos=itens.filter(i=>i.fornecedor_escolhido&&String(i.fornecedor_escolhido).trim());
+  const faltam=itens.filter(i=>i.cotar!==false&&!i.fornecedor_escolhido);
+  if(!prontos.length){alert('Nenhum item tem fornecedor escolhido ainda. Clique nos preços para escolher.');return;}
+  const semId=C.semanas.find(s=>String(s.id)===String(rodada.semana_id))?.id;
+  if(!semId){alert('Não encontrei a semana desta cotação.');return;}
+  let msg=prontos.length+' item(ns) vão para o "Montar compra", separados por fornecedor.';
+  if(faltam.length)msg+='\n\nAinda sem fornecedor escolhido (não vão):\n• '+faltam.map(i=>i.produto).join('\n• ');
+  const temCompra=mc.semId===semId&&mc.forns.some(f=>f.itens.length);
+  if(temCompra)msg+='\n\nJá existe uma compra sendo montada nesta semana. Os itens serão juntados a ela.';
+  if(!confirm(msg+'\n\nContinuar?'))return;
+  if(mc.semId!==semId)mc={semId,forns:[],ativo:0,cat:'',criando:false};
+  mc.forns=mc.forns.filter(f=>f.itens.length||f.nome.trim());
+  prontos.forEach(it=>{
+    let f=mc.forns.find(x=>ctNorm(x.nome)===ctNorm(it.fornecedor_escolhido));
+    if(!f){f={nome:String(it.fornecedor_escolhido).trim(),itens:[]};mc.forns.push(f);}
+    const p=C.produtos.find(x=>ctNorm(x.nome)===ctNorm(it.produto)&&x.categoria===it.categoria)||C.produtos.find(x=>ctNorm(x.nome)===ctNorm(it.produto));
+    const pid=p?p.id:'cot-'+it.id;
+    if(f.itens.some(x=>x.pid===pid)){toast('"'+it.produto+'" já estava na compra de '+f.nome.toUpperCase()+', não repeti');return;}
+    f.itens.push({pid,nome:it.produto,unidade:it.unidade||p?.unidade||'',categoria:it.categoria||p?.categoria||'',
+      qty:String(mcN(it.quantidade)),valor:it.preco_escolhido!=null?String(it.preco_escolhido):'',dist:{}});
+  });
+  if(!mc.forns.length)mc.forns=[mcNovoForn()];
+  mc.ativo=0;
+  openMontarCompra(semId);
 }
 
 // ── PDF / IMAGEM ─────────────────────────────────────
