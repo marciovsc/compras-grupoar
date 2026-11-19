@@ -29,6 +29,8 @@ O esquema abaixo foi reconstruído a partir do código; confira no painel do Sup
 
 **Material de Limpeza (tabelas separadas):** `semanas_limpeza`, `categorias_limpeza`, `produtos_limpeza`, `pedidos_limpeza`, `itens_limpeza`, `fechamentos_limpeza`.
 
+**Montar compra (rascunho):** `compras_montadas` (`semana_id` text, chave; `dados` jsonb com fornecedores, itens e distribuição por loja; `atualizado_em`). Salva sozinha a cada alteração; o navegador guarda cópia só enquanto a nuvem não confirma. É apagada ao criar os pedidos ou em "Descartar compra".
+
 **Listas editáveis pelo usuário:** `setores` (hoje: Cozinha Quente, Confeitaria) e `locais_entrega` (hoje: Arvo, Voar, Terra, Porto Fino).
 
 Colunas adicionadas ao longo do projeto:
