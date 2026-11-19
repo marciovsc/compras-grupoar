@@ -784,6 +784,8 @@ function renderSemanaCard(s,allPeds){
         <button class="btn btn-sm" onclick="event.stopPropagation();openNovoPedido('${s.id}')"><i class="ti ti-plus"></i> Pedido</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();openMontarCompra('${s.id}')" title="Montar a compra primeiro e escolher a loja depois"><i class="ti ti-basket"></i> Montar compra${(mcLerTodos()[s.id]?.forns||[]).some(f=>(f.itens||[]).length)?' <span style="color:var(--c-accent);font-weight:600">(em andamento)</span>':''}</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();openCotacoes('${s.id}')" title="Pedir preço aos fornecedores e comparar"><i class="ti ti-report-money"></i> Cotação</button>
+        <button class="btn btn-sm" onclick="event.stopPropagation();openMoverItens('${s.id}')" title="Passar itens desta loja para outra"><i class="ti ti-arrows-exchange"></i> Mover</button>
+        <button class="btn btn-sm" onclick="event.stopPropagation();openEquilibrar('${s.id}')" title="Dividir a semana entre as lojas pela porcentagem"><i class="ti ti-scale"></i> Equilibrar lojas</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();abrirFiltroRecibo(null,'${s.id}')" title="Gerar recibo para um fornecedor"><i class="ti ti-file-invoice"></i> Recibo</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();abrirFiltroEspelho('${s.id}')" title="Espelho para estoquista"><i class="ti ti-printer"></i> Espelho</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();editarSemana('${s.id}')"><i class="ti ti-pencil"></i></button>
@@ -855,7 +857,7 @@ function renderTabelaItens(peds,showToolbar){
       <td>${selectComNovo({id:'',valorAtual:r.setor,lista:getSetores(),onChangeFn:"updItemSetor('"+r.itemId+"',this.value)",onNovoFn:"cadastrarNovoSetor(v=>{updItemSetor('"+r.itemId+"',v);renderPedidos();})"})}</td>
       <td>${selectComNovo({id:'',valorAtual:r.local,lista:getLocais(),onChangeFn:"updItemLocal('"+r.itemId+"',this.value)",onNovoFn:"cadastrarNovoLocal(v=>{updItemLocal('"+r.itemId+"',v);renderPedidos();})"})}</td>
       <td class="r" style="font-weight:500" id="sub-${r.itemId}">${sub>0?fmt(sub):'—'}</td>
-      <td style="white-space:nowrap;display:flex;align-items:center;gap:4px">${prevInp} ${sbadge} ${confirmar}<button class="btn-xs btn-del" onclick="delItem('${r.itemId}','${r.pedId}')" title="Excluir item" style="padding:2px 6px;color:var(--ar-red);border-color:transparent"><i class="ti ti-trash" style="font-size:12px"></i></button></td>
+      <td style="white-space:nowrap;display:flex;align-items:center;gap:4px">${prevInp} ${sbadge} ${confirmar}<button class="btn-xs" onclick="openMoverItens(C.pedidos.find(p=>p.id==='${r.pedId}')?.semana_id,'${r.itemId}')" title="Mover este item para outra loja" style="padding:2px 6px;color:var(--c-dim);border-color:transparent"><i class="ti ti-arrows-exchange" style="font-size:12px"></i></button><button class="btn-xs btn-del" onclick="delItem('${r.itemId}','${r.pedId}')" title="Excluir item" style="padding:2px 6px;color:var(--ar-red);border-color:transparent"><i class="ti ti-trash" style="font-size:12px"></i></button></td>
     </tr>`;
   });
   rowsHtml+=`<tr class="total-row"><td colspan="6" style="text-align:right;padding-right:10px">Total</td><td class="r" style="font-weight:500;color:var(--ar-white)">${fmt(totalGeral)}</td><td></td><td></td></tr>`;
@@ -1057,6 +1059,292 @@ async function recalcPedStatus(pedId){
   const novo=todos?'Entregue':algum?'Previsto':'Aguardando';
   await supa.from('pedidos').update({status:novo}).eq('id',pedId);
   C.pedidos=C.pedidos.map(p=>p.id===pedId?{...p,status:novo}:p);
+}
+
+// ── MOVER ITENS ENTRE LOJAS / EQUILIBRAR POR % ───────
+// Nada aqui muda dados sozinho: só grava quando o usuário clica em "Mover" ou "Aplicar".
+const normForn=s=>(s||'').trim().toLowerCase();
+const fmtQtd=n=>String(Math.round((parseFloat(n)||0)*1000)/1000).replace('.',',');
+function itemValor(it){return (parseFloat(it.quantidade)||0)*(parseFloat(it.valor_unit)||0);}
+function itensDaSemana(semId,restId){
+  const pids=new Set(C.pedidos.filter(p=>p.semana_id===semId&&(!restId||p.restaurante_id===restId)).map(p=>p.id));
+  return C.itens.filter(i=>pids.has(i.pedido_id));
+}
+function restDoItem(it){return C.pedidos.find(p=>p.id===it.pedido_id)?.restaurante_id;}
+function nomeRest(id){return C.restaurantes.find(r=>r.id===id)?.nome||'—';}
+
+// moves: [{itemId, qtd, destRestId}]
+async function executarMovimentos(moves,semId){
+  let ok=0;const erros=[];const tocados=new Set();
+  const novosPeds={}; // chave rest|forn -> pedido criado agora
+  for(const m of moves){
+    const it=C.itens.find(i=>i.id===m.itemId);
+    if(!it){erros.push('item não encontrado');continue;}
+    const src=C.pedidos.find(p=>p.id===it.pedido_id);
+    if(!src||src.restaurante_id===m.destRestId)continue;
+    const forn=(it.fornecedor||src.titulo||'').trim();
+    const chave=m.destRestId+'|'+normForn(forn);
+    let dest=novosPeds[chave]||C.pedidos.find(p=>p.semana_id===src.semana_id&&p.restaurante_id===m.destRestId&&normForn(p.titulo)===normForn(forn));
+    if(!dest){
+      const {data,error}=await supa.from('pedidos').insert({
+        restaurante_id:m.destRestId,semana_id:src.semana_id,titulo:forn||src.titulo,
+        data:new Date().toISOString().slice(0,10),status:'Aguardando',total:0,
+        observacao:null,local_entrega:src.local_entrega||null
+      }).select().single();
+      if(error){erros.push(it.produto+': '+error.message);continue;}
+      dest=data;novosPeds[chave]=dest;C.pedidos.push(dest);
+    }
+    const qTotal=parseFloat(it.quantidade)||0;
+    const q=Math.min(parseFloat(m.qtd)||0,qTotal||Infinity);
+    if(!qTotal||q>=qTotal-1e-9){
+      // move o item inteiro
+      const {data,error}=await supa.from('pedido_itens').update({pedido_id:dest.id}).eq('id',it.id).select();
+      if(error||!data||!data.length){erros.push(it.produto+': '+(error?.message||'não gravou'));continue;}
+      C.itens=C.itens.map(i=>i.id===it.id?{...i,pedido_id:dest.id}:i);
+    } else {
+      if(q<=0)continue;
+      // divide: parte fica, parte vai
+      const {id,created_at,...copia}=it;
+      const {data:novo,error:e1}=await supa.from('pedido_itens').insert({...copia,pedido_id:dest.id,quantidade:q}).select().single();
+      if(e1){erros.push(it.produto+': '+e1.message);continue;}
+      const resto=Math.round((qTotal-q)*1000)/1000;
+      const {error:e2}=await supa.from('pedido_itens').update({quantidade:resto}).eq('id',it.id);
+      if(e2){
+        await supa.from('pedido_itens').delete().eq('id',novo.id);
+        erros.push(it.produto+': '+e2.message);continue;
+      }
+      C.itens=C.itens.map(i=>i.id===it.id?{...i,quantidade:resto}:i);C.itens.push(novo);
+    }
+    tocados.add(src.id);tocados.add(dest.id);ok++;
+  }
+  for(const pid of tocados){await recalcTotal(pid);if(C.itens.some(i=>i.pedido_id===pid))await recalcPedStatus(pid);}
+  // Pedidos que ficaram sem itens: só apaga se o usuário confirmar
+  const vazios=[...tocados].map(pid=>C.pedidos.find(p=>p.id===pid)).filter(p=>p&&!C.itens.some(i=>i.pedido_id===p.id));
+  if(vazios.length&&confirm(vazios.length+' pedido(s) ficaram sem nenhum item:\n'+vazios.map(p=>'• '+nomeRest(p.restaurante_id).toUpperCase()+' · '+p.titulo).join('\n')+'\n\nApagar esses pedidos vazios?')){
+    for(const p of vazios){await supa.from('pedidos').delete().eq('id',p.id);}
+    C.pedidos=C.pedidos.filter(p=>!vazios.some(v=>v.id===p.id));
+  }
+  // Semana já fechada: o relatório mensal guarda uma "foto" antiga
+  let fechada=false;
+  if(semId){const {data}=await supa.from('semanas_fechadas').select('semana_id').eq('semana_id',semId).limit(1);fechada=!!(data&&data.length);}
+  closeModal();await reloadAll();renderPedidos();
+  if(erros.length)alert(ok+' item(ns) movido(s). Não foi possível mover:\n'+erros.join('\n'));
+  else toast(ok+' item(ns) movido(s)!',3000);
+  if(fechada)alert('Esta semana já tinha sido fechada. Para o Relatório Mensal mostrar os valores novos, clique de novo no cadeado (Fechar semana).');
+}
+
+// ---- Mover (escolhendo os itens) ----
+let mv={semId:null,restId:null,dest:null,qtd:{}};
+function openMoverItens(semId,itemId){
+  const lista=itensDaSemana(semId,restAtivo);
+  if(!lista.length){toast('Nenhum item nesta semana para mover.');return;}
+  const outros=C.restaurantes.filter(r=>r.id!==restAtivo);
+  mv={semId,restId:restAtivo,dest:outros[0]?.id||null,qtd:{}};
+  if(itemId){const it=lista.find(i=>i.id===itemId);if(it)mv.qtd[itemId]=parseFloat(it.quantidade)||0;}
+  renderMoverItens();
+}
+function renderMoverItens(){
+  const sem=C.semanas.find(s=>s.id===mv.semId);
+  const origem=nomeRest(mv.restId);
+  const lista=itensDaSemana(mv.semId,mv.restId).sort((a,b)=>(a.fornecedor||'').localeCompare(b.fornecedor||'')||(a.produto||'').localeCompare(b.produto||''));
+  const outros=C.restaurantes.filter(r=>r.id!==mv.restId);
+  const linhas=lista.map(it=>{
+    const qT=parseFloat(it.quantidade)||0;const q=mv.qtd[it.id]||0;
+    return `<tr>
+      <td style="text-align:center"><input type="checkbox" ${q>0?'checked':''} onchange="mvMarcar('${it.id}',this.checked)"></td>
+      <td>${it.produto||''}<div style="font-size:11px;color:var(--c-dim)">${(it.fornecedor||'').toUpperCase()} · ${it.status||'Aguardando'}</div></td>
+      <td class="r">${fmtQtd(qT)} ${it.unidade||''}</td>
+      <td class="r">${fmt(parseFloat(it.valor_unit)||0)}</td>
+      <td class="r"><input type="number" min="0" max="${qT}" step="0.5" value="${q||''}" id="mvq-${it.id}" oninput="mvQtd('${it.id}',this.value)" style="width:70px;text-align:right"></td>
+      <td class="r" id="mvf-${it.id}">${fmtQtd(qT-q)}</td>
+    </tr>`;}).join('');
+  showModal(`
+    <div style="font-size:16px;font-weight:700;color:var(--c-text);margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <i class="ti ti-arrows-exchange" style="color:var(--c-accent);font-size:18px"></i> Mover itens para outra loja ${restBadgeHtml(origem)}
+    </div>
+    <div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">${semLabel(sem)}</div>
+    <div class="g8" style="margin-bottom:12px"><span style="font-size:13px;font-weight:600">Mover para:</span>
+      <select onchange="mv.dest=this.value;mvAtualizar()" style="width:auto;min-width:140px">${outros.map(r=>`<option value="${r.id}"${r.id===mv.dest?' selected':''}>${r.nome.toUpperCase()}</option>`).join('')}</select>
+    </div>
+    <div style="font-size:12px;color:var(--c-dim);margin-bottom:8px">Marque os itens. Para mandar só uma parte, troque a quantidade em "Mover".</div>
+    <div class="tbl-outer"><table class="ped-table" style="font-size:13px">
+      <thead><tr><th></th><th>Item</th><th class="r">Qtd. no pedido</th><th class="r">Valor unit.</th><th class="r">Mover</th><th class="r">Fica em ${origem.toUpperCase()}</th></tr></thead>
+      <tbody>${linhas}</tbody>
+    </table></div>
+    <div style="margin:12px 0;font-size:13px">Vai sair de ${origem.toUpperCase()}: <b id="mv-tot">R$ 0,00</b></div>
+    <div style="font-size:12px;color:var(--c-dim);margin-bottom:14px;background:var(--c-accent-bg);padding:10px 12px;border-radius:var(--r)">
+      <i class="ti ti-info-circle"></i> O item entra no pedido da outra loja com o mesmo fornecedor nesta semana (se não existir, um pedido novo é criado). Preço, status, setor e local vão junto.
+    </div>
+    <div class="g8" style="justify-content:flex-end">
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-acc" id="mv-btn" onclick="confirmarMoverItens()"><i class="ti ti-arrows-exchange"></i> Mover</button>
+    </div>`,{wide:true});
+  mvAtualizar();
+}
+function mvMarcar(id,on){
+  const it=C.itens.find(i=>i.id===id);if(!it)return;
+  mv.qtd[id]=on?(parseFloat(it.quantidade)||0):0;
+  const inp=document.getElementById('mvq-'+id);if(inp)inp.value=on?mv.qtd[id]:'';
+  mvAtualizar();
+}
+function mvQtd(id,val){
+  const it=C.itens.find(i=>i.id===id);if(!it)return;
+  const qT=parseFloat(it.quantidade)||0;
+  let q=parseFloat(String(val).replace(',','.'))||0;if(q<0)q=0;if(qT&&q>qT)q=qT;
+  mv.qtd[id]=q;
+  const cb=document.getElementById('mvq-'+id)?.closest('tr')?.querySelector('input[type=checkbox]');if(cb)cb.checked=q>0;
+  mvAtualizar();
+}
+function mvAtualizar(){
+  let tot=0,n=0;
+  Object.entries(mv.qtd).forEach(([id,q])=>{
+    const it=C.itens.find(i=>i.id===id);if(!it||!q)return;
+    tot+=q*(parseFloat(it.valor_unit)||0);n++;
+    const f=document.getElementById('mvf-'+id);if(f)f.textContent=fmtQtd((parseFloat(it.quantidade)||0)-q);
+  });
+  C.itens.forEach(it=>{if(!mv.qtd[it.id]){const f=document.getElementById('mvf-'+it.id);if(f)f.textContent=fmtQtd(parseFloat(it.quantidade)||0);}});
+  const t=document.getElementById('mv-tot');if(t)t.textContent=fmt(tot);
+  const b=document.getElementById('mv-btn');
+  if(b){b.disabled=!n||!mv.dest;b.style.opacity=b.disabled?'0.5':'';b.innerHTML='<i class="ti ti-arrows-exchange"></i> Mover '+(n?n+' item(ns) ':'')+'para '+nomeRest(mv.dest).toUpperCase();}
+}
+async function confirmarMoverItens(){
+  const moves=Object.entries(mv.qtd).filter(([,q])=>q>0).map(([itemId,qtd])=>({itemId,qtd,destRestId:mv.dest}));
+  if(!moves.length||!mv.dest)return;
+  const b=document.getElementById('mv-btn');if(b){b.disabled=true;b.textContent='Movendo...';}
+  await executarMovimentos(moves,mv.semId);
+}
+
+// ---- Equilibrar lojas pela porcentagem ----
+const EQ_PADRAO={arvo:45,terra:35,voar:20};
+let eq={semId:null,pct:{},sug:[],incluirEntregues:false};
+function eqPctIniciais(semId){
+  const sem=C.semanas.find(s=>s.id===semId);
+  let p=sem&&sem.percentuais;
+  if(!p){ // usa a última semana que tem % salva
+    const ant=C.semanas.filter(s=>s.percentuais&&s.id!==semId&&(s.data_inicio||'')<=(sem?.data_inicio||'9999')).sort((a,b)=>(b.data_inicio||'').localeCompare(a.data_inicio||''))[0];
+    p=ant?.percentuais||null;
+  }
+  const out={};
+  C.restaurantes.forEach(r=>{out[r.id]=p&&p[r.id]!=null?Number(p[r.id]):(EQ_PADRAO[r.nome.toLowerCase().trim()]??0);});
+  return out;
+}
+function openEquilibrar(semId){
+  eq={semId,pct:eqPctIniciais(semId),sug:[],incluirEntregues:false};
+  eqCalcularSugestao();renderEquilibrar();
+}
+function eqSituacao(){
+  const its=itensDaSemana(eq.semId);
+  const tem={};C.restaurantes.forEach(r=>tem[r.id]=0);
+  its.forEach(it=>{const r=restDoItem(it);if(r in tem)tem[r]+=itemValor(it);});
+  const total=Object.values(tem).reduce((a,b)=>a+b,0);
+  const soma=Object.values(eq.pct).reduce((a,b)=>a+(Number(b)||0),0);
+  const alvo={};C.restaurantes.forEach(r=>alvo[r.id]=total*(Number(eq.pct[r.id])||0)/100);
+  return {its,tem,total,soma,alvo};
+}
+function eqCalcularSugestao(){
+  eq.sug=[];
+  const {its,tem,total,soma,alvo}=eqSituacao();
+  if(Math.abs(soma-100)>0.01||!total)return;
+  const dif={};Object.keys(tem).forEach(r=>dif[r]=tem[r]-alvo[r]);
+  const tol=Math.max(5,total*0.002);
+  const resto={};its.forEach(it=>resto[it.id]=parseFloat(it.quantidade)||0);
+  const vrest=it=>resto[it.id]*(parseFloat(it.valor_unit)||0);
+  for(let k=0;k<300;k++){
+    const ords=Object.keys(dif).sort((a,b)=>dif[b]-dif[a]);
+    const doador=ords[0],recebe=ords[ords.length-1];
+    if(dif[doador]<=tol||dif[recebe]>=-tol)break;
+    const falta=Math.min(dif[doador],-dif[recebe]);
+    const cands=its.filter(it=>restDoItem(it)===doador&&resto[it.id]>0&&(parseFloat(it.valor_unit)||0)>0&&(eq.incluirEntregues||it.status!=='Entregue'));
+    if(!cands.length){dif[doador]=0;continue;}
+    // 1º: o maior item inteiro (o que sobrou dele) que cabe na diferença
+    const inteiros=cands.filter(it=>vrest(it)<=falta+tol).sort((a,b)=>vrest(b)-vrest(a));
+    let it=inteiros[0],qtd,val;
+    if(it){qtd=resto[it.id];val=vrest(it);}
+    else{
+      // 2º: parte da quantidade (número inteiro) do item que chega mais perto
+      const parc=cands.map(c=>{const vu=parseFloat(c.valor_unit)||0;const q=Math.min(resto[c.id],Math.floor(falta/vu));return{c,q,v:q*vu};}).filter(x=>x.q>=1).sort((a,b)=>b.v-a.v)[0];
+      if(!parc){dif[doador]=0;continue;}
+      it=parc.c;qtd=parc.q;val=parc.v;
+    }
+    resto[it.id]=Math.round((resto[it.id]-qtd)*1000)/1000;
+    const ja=eq.sug.find(x=>x.itemId===it.id&&x.para===recebe);
+    if(ja)ja.qtd=Math.round((ja.qtd+qtd)*1000)/1000;
+    else eq.sug.push({itemId:it.id,de:doador,para:recebe,qtd,usar:true});
+    dif[doador]-=val;dif[recebe]+=val;
+  }
+}
+function eqDepois(){
+  const {tem}=eqSituacao();const dep={...tem};
+  eq.sug.forEach(s=>{if(!s.usar)return;const it=C.itens.find(i=>i.id===s.itemId);if(!it)return;const v=(parseFloat(s.qtd)||0)*(parseFloat(it.valor_unit)||0);dep[s.de]-=v;dep[s.para]+=v;});
+  return dep;
+}
+function renderEquilibrar(){
+  const sem=C.semanas.find(s=>s.id===eq.semId);
+  const {tem,total,soma,alvo}=eqSituacao();
+  const somaOk=Math.abs(soma-100)<=0.01;
+  const dep=eqDepois();
+  const corDif=d=>Math.abs(d)<=Math.max(5,total*0.002)?'var(--c-green)':'var(--c-orange)';
+  const sinal=d=>(d>0?'+ ':d<0?'− ':'')+fmt(Math.abs(d));
+  const linhasLoja=C.restaurantes.map(r=>{const d=tem[r.id]-alvo[r.id];return `<tr>
+    <td>${restBadgeHtml(r.nome)}</td>
+    <td class="r"><input type="number" min="0" max="100" step="1" value="${eq.pct[r.id]}" onchange="eqPct('${r.id}',this.value)" style="width:60px;text-align:right"> %</td>
+    <td class="r">${somaOk?fmt(alvo[r.id]):'—'}</td>
+    <td class="r">${fmt(tem[r.id])}</td>
+    <td class="r" style="font-weight:600;color:${somaOk?corDif(d):'var(--c-dim)'}">${somaOk?sinal(d):'—'}</td>
+    <td class="r">${somaOk&&eq.sug.length?fmt(dep[r.id]):''}</td>
+  </tr>`;}).join('');
+  let sugHtml='';
+  if(!total)sugHtml='<div class="empty" style="padding:16px">Esta semana ainda não tem itens com valor.</div>';
+  else if(!somaOk)sugHtml=`<div style="font-size:13px;background:var(--c-orange-bg);color:var(--c-orange);padding:10px 12px;border-radius:var(--r);font-weight:600"><i class="ti ti-alert-triangle"></i> As porcentagens somam ${String(Math.round(soma*100)/100).replace('.',',')}%. Ajuste para dar 100% e a sugestão aparece.</div>`;
+  else if(!eq.sug.length)sugHtml='<div style="font-size:13px;background:var(--c-green-bg);color:var(--c-green);padding:10px 12px;border-radius:var(--r);font-weight:600"><i class="ti ti-check"></i> As lojas já estão equilibradas (ou não há itens que dê para mover).</div>';
+  else sugHtml=`<div style="font-size:13px;font-weight:600;margin-bottom:6px">Sugestão (nada muda até você clicar em Aplicar):</div>
+    <div class="tbl-outer"><table class="ped-table" style="font-size:13px">
+      <thead><tr><th>Usar?</th><th>Item</th><th>De</th><th>Para</th><th class="r">Qtd.</th><th class="r">Valor</th></tr></thead>
+      <tbody>${eq.sug.map((s,i)=>{const it=C.itens.find(x=>x.id===s.itemId);if(!it)return'';const qT=parseFloat(it.quantidade)||0;return `<tr>
+        <td style="text-align:center"><input type="checkbox" ${s.usar?'checked':''} onchange="eq.sug[${i}].usar=this.checked;renderEquilibrar()"></td>
+        <td>${it.produto||''}<div style="font-size:11px;color:var(--c-dim)">${(it.fornecedor||'').toUpperCase()} · tem ${fmtQtd(qT)} ${it.unidade||''}</div></td>
+        <td>${restBadgeHtml(nomeRest(s.de))}</td><td>${restBadgeHtml(nomeRest(s.para))}</td>
+        <td class="r"><input type="number" min="0" max="${qT}" step="0.5" value="${s.qtd}" onchange="eqQtd(${i},this.value)" style="width:70px;text-align:right"></td>
+        <td class="r">${fmt((parseFloat(s.qtd)||0)*(parseFloat(it.valor_unit)||0))}</td>
+      </tr>`;}).join('')}</tbody>
+    </table></div>`;
+  const nUsar=eq.sug.filter(s=>s.usar&&s.qtd>0).length;
+  showModal(`
+    <div style="font-size:16px;font-weight:700;color:var(--c-text);margin-bottom:4px;display:flex;align-items:center;gap:8px">
+      <i class="ti ti-scale" style="color:var(--c-accent);font-size:18px"></i> Equilibrar lojas
+    </div>
+    <div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">${semLabel(sem)} · Total da semana: <b>${fmt(total)}</b></div>
+    <div class="tbl-outer" style="margin-bottom:8px"><table class="ped-table" style="font-size:13px">
+      <thead><tr><th>Loja</th><th class="r">% da semana</th><th class="r">Deveria ter</th><th class="r">Tem hoje</th><th class="r">Diferença</th><th class="r">${eq.sug.length&&somaOk?'Depois':''}</th></tr></thead>
+      <tbody>${linhasLoja}</tbody>
+    </table></div>
+    <div style="font-size:12px;color:var(--c-dim);margin-bottom:12px">A porcentagem fica guardada nesta semana. A próxima semana começa com a última usada.</div>
+    <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--c-dim);margin-bottom:12px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:400"><input type="checkbox" style="width:auto;margin:0" ${eq.incluirEntregues?'checked':''} onchange="eq.incluirEntregues=this.checked;eqCalcularSugestao();renderEquilibrar()"> Sugerir também itens já entregues</label>
+    ${sugHtml}
+    <div class="g8" style="justify-content:flex-end;margin-top:16px">
+      <button class="btn" onclick="closeModal()">Fechar</button>
+      ${somaOk&&eq.sug.length?`<button class="btn btn-acc" id="eq-btn" ${nUsar?'':'disabled'} onclick="aplicarEquilibrio()"><i class="ti ti-check"></i> Aplicar ${nUsar} movimento(s)</button>`:''}
+    </div>`,{wide:true});
+}
+async function eqPct(restId,val){
+  eq.pct[restId]=Math.max(0,parseFloat(String(val).replace(',','.'))||0);
+  eqCalcularSugestao();renderEquilibrar();
+  const soma=Object.values(eq.pct).reduce((a,b)=>a+(Number(b)||0),0);
+  if(Math.abs(soma-100)>0.01)return; // só guarda quando fecha 100%
+  const {error}=await supa.from('semanas').update({percentuais:eq.pct}).eq('id',eq.semId);
+  if(error){toast('Não consegui guardar a % no banco (falta rodar o SQL da porcentagem).',4000);return;}
+  C.semanas=C.semanas.map(s=>s.id===eq.semId?{...s,percentuais:{...eq.pct}}:s);
+}
+function eqQtd(i,val){
+  const s=eq.sug[i];const it=C.itens.find(x=>x.id===s.itemId);const qT=parseFloat(it?.quantidade)||0;
+  let q=parseFloat(String(val).replace(',','.'))||0;if(q<0)q=0;if(qT&&q>qT)q=qT;
+  s.qtd=q;renderEquilibrar();
+}
+async function aplicarEquilibrio(){
+  const moves=eq.sug.filter(s=>s.usar&&s.qtd>0).map(s=>({itemId:s.itemId,qtd:s.qtd,destRestId:s.para}));
+  if(!moves.length)return;
+  const b=document.getElementById('eq-btn');if(b){b.disabled=true;b.textContent='Aplicando...';}
+  await executarMovimentos(moves,eq.semId);
 }
 
 // ── NOVA SEMANA ──────────────────────────────────────
