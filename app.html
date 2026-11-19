@@ -777,6 +777,7 @@ function renderSemanaCard(s,allPeds){
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <button class="btn btn-sm" onclick="event.stopPropagation();openNovoPedido('${s.id}')"><i class="ti ti-plus"></i> Pedido</button>
+        <button class="btn btn-sm" onclick="event.stopPropagation();openMontarCompra('${s.id}')" title="Montar a compra primeiro e escolher a loja depois"><i class="ti ti-basket"></i> Montar compra</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();abrirFiltroRecibo(null,'${s.id}')" title="Gerar recibo para um fornecedor"><i class="ti ti-file-invoice"></i> Recibo</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();abrirFiltroEspelho('${s.id}')" title="Espelho para estoquista"><i class="ti ti-printer"></i> Espelho</button>
         <button class="btn btn-sm" onclick="event.stopPropagation();editarSemana('${s.id}')"><i class="ti ti-pencil"></i></button>
@@ -1436,6 +1437,316 @@ async function delPedido(id){
   C.pedidos=C.pedidos.filter(p=>p.id!==id);
   C.itens=C.itens.filter(i=>i.pedido_id!==id);
   toast('Pedido removido');renderPedidos();
+}
+
+// ── MONTAR COMPRA (sem loja) E ESCOLHER A LOJA DEPOIS ──────────
+// Passo 1: lança fornecedores, produtos, quantidade total e preço, sem loja.
+// Passo 2: distribui a quantidade de cada item entre os restaurantes.
+// "Criar os pedidos" gera 1 pedido por restaurante + fornecedor, só quando o usuário clicar.
+// A compra montada fica guardada em memória (mc) enquanto a página estiver aberta,
+// então fechar a janela sem querer não perde o que já foi digitado.
+let mc={semId:null,forns:[],ativo:0,cat:'',criando:false};
+function mcEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function mcN(v){const n=parseFloat(String(v==null?'':v).replace(',','.'));return isNaN(n)?0:n;}
+function mcQ(n){return String(Math.round(n*1000)/1000).replace('.',',');}
+function mcNovoForn(){return{nome:'',itens:[]};}
+
+function openMontarCompra(semId){
+  if(mc.semId!==(semId||null)){mc={semId:semId||null,forns:[mcNovoForn()],ativo:0,cat:'',criando:false};}
+  if(!mc.forns.length)mc.forns=[mcNovoForn()];
+  if(!mc.cat||!C.categorias.find(c=>c.nome===mc.cat))mc.cat=C.categorias[0]?.nome||'';
+  mcPasso1();
+}
+
+function mcPasso1(){
+  const sem=mc.semId?C.semanas.find(s=>s.id===mc.semId):null;
+  showModal(`
+    <div style="font-size:11px;font-weight:700;color:var(--c-accent);letter-spacing:0.06em">PASSO 1 DE 2</div>
+    <div style="font-size:16px;font-weight:600;color:var(--c-text);margin:2px 0 4px;display:flex;align-items:center;gap:8px">
+      <i class="ti ti-basket" style="color:var(--c-accent);font-size:18px"></i> Montar compra
+    </div>
+    <div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">${sem?semLabel(sem)+' · ':''}ainda sem loja definida. A loja é escolhida no próximo passo.</div>
+    <div id="mc-forns"></div>
+    <div style="margin:4px 0 14px"><button class="btn btn-sm" onclick="mcAddForn()"><i class="ti ti-plus"></i> Adicionar outro fornecedor</button></div>
+    <div style="background:var(--c-bg);border:1px solid var(--c-border);border-radius:10px;padding:12px 14px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <span style="font-size:11px;font-weight:600;color:var(--c-dim);text-transform:uppercase;letter-spacing:0.05em">Adicionar produtos em:</span>
+        <select id="mc-ativo" onchange="mcSetAtivo(this.value)" style="width:auto;min-width:200px;padding:5px 8px;font-size:12px"></select>
+      </div>
+      <div id="mc-pills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
+      <input id="mc-s" type="text" placeholder="Digite para filtrar..." oninput="mcFiltrar()" style="width:100%;margin-bottom:10px">
+      <div class="prod-list" id="mc-list"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--c-border);padding-top:12px;margin-top:14px">
+      <div style="display:flex;align-items:baseline;gap:10px">
+        <span style="font-size:12px;font-weight:600;color:var(--c-dim);text-transform:uppercase;letter-spacing:0.04em">Total da compra</span>
+        <span id="mc-total" style="font-size:20px;font-weight:700;color:var(--c-accent);white-space:nowrap">R$ 0,00</span>
+      </div>
+      <div class="g8">
+        <button class="btn" onclick="mcDescartar()" title="Apaga tudo o que foi digitado nesta compra">Descartar compra</button>
+        <button class="btn" onclick="closeModal()">Fechar</button>
+        <button class="btn btn-acc" onclick="mcIrPasso2()">Próximo: escolher as lojas <i class="ti ti-arrow-right"></i></button>
+      </div>
+    </div>`,{wide:true});
+  mcRenderForns();
+  mcRenderPills();
+  mcFiltrar();
+}
+
+function mcRenderForns(){
+  const el=document.getElementById('mc-forns');if(!el)return;
+  if(mc.ativo>=mc.forns.length)mc.ativo=mc.forns.length-1;
+  el.innerHTML=mc.forns.map((f,fi)=>{
+    const sub=f.itens.reduce((s,it)=>s+mcN(it.qty)*mcN(it.valor),0);
+    const ativo=fi===mc.ativo;
+    const linhas=f.itens.length?f.itens.map((it,ii)=>'<tr>'
+        +'<td style="font-size:12px">'+mcEsc(it.nome)+'</td>'
+        +'<td style="font-size:12px;color:var(--c-dim)">'+mcEsc(it.unidade)+'</td>'
+        +'<td><input type="number" min="0" step="0.5" value="'+mcEsc(it.qty)+'" onchange="mcSetItem('+fi+','+ii+',\'qty\',this.value)" style="width:80px;padding:4px 8px;font-size:12px"></td>'
+        +'<td><input type="number" min="0" step="0.01" value="'+mcEsc(it.valor)+'" onchange="mcSetItem('+fi+','+ii+',\'valor\',this.value)" style="width:100px;padding:4px 8px;font-size:12px" placeholder="0.00">'+mcUltimoHtml(it.nome)+'</td>'
+        +'<td style="font-size:12px;white-space:nowrap" id="mc-lt-'+fi+'-'+ii+'">'+fmt(mcN(it.qty)*mcN(it.valor))+'</td>'
+        +'<td><span style="cursor:pointer;color:var(--c-red)" title="Tirar item" onclick="mcRemItem('+fi+','+ii+')">&#x2715;</span></td>'
+        +'</tr>').join('')
+      :'<tr><td colspan="6" style="font-size:12px;color:var(--c-dim);padding:10px">Nenhum produto ainda. Escolha os produtos na lista abaixo.</td></tr>';
+    return '<div style="background:var(--c-white);border:'+(ativo?'2px solid var(--c-accent)':'1px solid var(--c-border)')+';border-radius:10px;padding:12px 14px;margin-bottom:10px">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">'
+        +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+          +'<label style="font-size:11px;font-weight:600;color:var(--c-dim);text-transform:uppercase">Fornecedor</label>'
+          +'<input type="text" value="'+mcEsc(f.nome)+'" placeholder="Ex: Ceasa Mais" oninput="mcSetForn('+fi+',this.value)" style="width:240px;font-weight:700;padding:6px 10px">'
+          +(ativo?'<span style="font-size:11px;color:var(--c-accent);font-weight:600">Produtos entram aqui</span>':'<button class="btn btn-xs" onclick="mcSetAtivo('+fi+')">Adicionar produtos aqui</button>')
+        +'</div>'
+        +'<div style="display:flex;align-items:center;gap:10px">'
+          +'<span style="font-size:12px;color:var(--c-dim)">Subtotal <b style="color:var(--c-text);white-space:nowrap" id="mc-sub-'+fi+'">'+fmt(sub)+'</b></span>'
+          +(mc.forns.length>1?'<button class="btn btn-xs" onclick="mcRemForn('+fi+')" title="Tirar este fornecedor da compra" style="color:var(--c-red)"><i class="ti ti-trash"></i></button>':'')
+        +'</div>'
+      +'</div>'
+      +'<div style="overflow-x:auto"><table class="ped-table"><thead><tr><th>Produto</th><th>Unid.</th><th>Qtd. total</th><th>Valor unit. (R$)</th><th>Total</th><th></th></tr></thead><tbody>'+linhas+'</tbody></table></div>'
+    +'</div>';
+  }).join('');
+  const sel=document.getElementById('mc-ativo');
+  if(sel)sel.innerHTML=mc.forns.map((f,fi)=>'<option value="'+fi+'"'+(fi===mc.ativo?' selected':'')+'>'+mcEsc(f.nome.trim()?f.nome.toUpperCase():'Fornecedor '+(fi+1)+' (sem nome)')+'</option>').join('');
+  mcTotal();
+}
+
+function mcUltimoHtml(nome){
+  const h=ultimoPreco(nome);
+  if(!h)return '';
+  const d=new Date(h.registrado_em).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+  return '<div style="font-size:10px;color:var(--c-dim);margin-top:2px;white-space:nowrap">Último: <b style="color:var(--c-accent)">'+fmtNum(h.valor_unit)+'</b> · '+mcEsc(h.fornecedor)+' · '+d+'</div>';
+}
+
+function mcTotal(){
+  const t=document.getElementById('mc-total');
+  const total=mc.forns.reduce((s,f)=>s+f.itens.reduce((a,it)=>a+mcN(it.qty)*mcN(it.valor),0),0);
+  if(t)t.textContent=fmt(total);
+}
+
+function mcRenderPills(){
+  const el=document.getElementById('mc-pills');if(!el)return;
+  el.innerHTML=C.categorias.map((c,i)=>{
+    const a=c.nome===mc.cat;
+    return '<button class="cat-pill'+(a?' active':'')+'" onclick="mcSetCat('+i+')" style="'+(a?'background:'+(c.cor||'var(--c-accent)')+';color:#FFFFFF;border-color:transparent':'')+'">'+mcEsc(c.nome)+'</button>';
+  }).join('');
+}
+function mcSetCat(i){mc.cat=C.categorias[i]?.nome||'';mcRenderPills();mcFiltrar();}
+
+function mcFiltrar(){
+  const el=document.getElementById('mc-list');if(!el)return;
+  const q=(document.getElementById('mc-s')?.value||'').toLowerCase();
+  const f=mc.forns[mc.ativo];
+  const naCompra=new Set((f?.itens||[]).map(it=>it.pid));
+  const lista=C.produtos.filter(p=>p.categoria===mc.cat&&(p.nome||'').toLowerCase().includes(q));
+  el.innerHTML=lista.length
+    ?lista.map(p=>'<div class="prod-row">'
+        +'<input type="checkbox" '+(naCompra.has(p.id)?'checked':'')+' onchange="mcToggleProd(\''+p.id+'\')" style="flex-shrink:0;width:16px;height:16px;accent-color:var(--c-accent)">'
+        +'<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+mcEsc(p.nome)+'</span>'
+        +'<span style="font-size:11px;color:var(--c-dim);flex-shrink:0;margin-left:8px;background:var(--c-white);padding:2px 6px;border-radius:4px">'+mcEsc(p.unidade)+'</span>'
+      +'</div>').join('')
+    :'<div style="font-size:13px;color:var(--c-dim);padding:12px 0;text-align:center">Nenhum produto nesta categoria</div>';
+}
+
+function mcToggleProd(pid){
+  const f=mc.forns[mc.ativo];if(!f)return;
+  const idx=f.itens.findIndex(it=>it.pid===pid);
+  if(idx>=0){f.itens.splice(idx,1);}
+  else{
+    const p=C.produtos.find(x=>x.id===pid);if(!p)return;
+    f.itens.push({pid:p.id,nome:p.nome,unidade:p.unidade,categoria:p.categoria,qty:'',valor:'',dist:{}});
+  }
+  mcRenderForns();
+}
+function mcSetForn(fi,v){
+  if(!mc.forns[fi])return;
+  mc.forns[fi].nome=v;
+  const sel=document.getElementById('mc-ativo');
+  if(sel&&sel.options[fi])sel.options[fi].textContent=v.trim()?v.toUpperCase():'Fornecedor '+(fi+1)+' (sem nome)';
+}
+function mcSetItem(fi,ii,campo,v){
+  const it=mc.forns[fi]?.itens[ii];if(!it)return;
+  it[campo]=v;
+  const lt=document.getElementById('mc-lt-'+fi+'-'+ii);if(lt)lt.textContent=fmt(mcN(it.qty)*mcN(it.valor));
+  const sub=document.getElementById('mc-sub-'+fi);
+  if(sub)sub.textContent=fmt(mc.forns[fi].itens.reduce((s,x)=>s+mcN(x.qty)*mcN(x.valor),0));
+  mcTotal();
+}
+function mcRemItem(fi,ii){mc.forns[fi]?.itens.splice(ii,1);mcRenderForns();mcFiltrar();}
+function mcAddForn(){mc.forns.push(mcNovoForn());mc.ativo=mc.forns.length-1;mcRenderForns();mcFiltrar();}
+function mcRemForn(fi){
+  const f=mc.forns[fi];if(!f)return;
+  if(f.itens.length&&!confirm('Tirar o fornecedor '+(f.nome.trim()?f.nome.toUpperCase():'sem nome')+' e os '+f.itens.length+' produto(s) dele desta compra?'))return;
+  mc.forns.splice(fi,1);
+  if(!mc.forns.length)mc.forns=[mcNovoForn()];
+  if(mc.ativo>=mc.forns.length)mc.ativo=mc.forns.length-1;
+  mcRenderForns();mcFiltrar();
+}
+function mcSetAtivo(fi){mc.ativo=parseInt(fi)||0;mcRenderForns();mcFiltrar();}
+function mcDescartar(){
+  if(!confirm('Apagar tudo o que foi digitado nesta compra? Nada foi salvo no sistema ainda.'))return;
+  mc={semId:mc.semId,forns:[mcNovoForn()],ativo:0,cat:mc.cat,criando:false};
+  mcPasso1();
+}
+
+function mcIrPasso2(){
+  const comItens=mc.forns.filter(f=>f.itens.length);
+  if(!comItens.length){alert('Adicione ao menos um produto.');return;}
+  const semNome=comItens.filter(f=>!f.nome.trim());
+  if(semNome.length){alert('Preencha o nome do fornecedor em todos os blocos que têm produtos.');return;}
+  const semQtd=[];
+  comItens.forEach(f=>f.itens.forEach(it=>{if(mcN(it.qty)<=0)semQtd.push(it.nome);}));
+  if(semQtd.length){alert('Preencha a quantidade total destes produtos:\n\n• '+semQtd.join('\n• '));return;}
+  mcPasso2();
+}
+
+// Quanto de um item já foi distribuído entre as lojas
+function mcDistSoma(it){return C.restaurantes.reduce((s,r)=>s+mcN(it.dist[r.id]),0);}
+function mcSituacao(it){
+  const diff=Math.round((mcN(it.qty)-mcDistSoma(it))*1000)/1000;
+  if(diff===0)return{ok:true,html:'<span style="color:var(--c-green);font-weight:600">OK</span>'};
+  if(diff>0)return{ok:false,falta:true,html:'<span style="color:#B54708;font-weight:600;white-space:nowrap">Falta '+mcQ(diff)+' '+mcEsc(it.unidade)+'</span>'};
+  return{ok:false,passou:true,html:'<span style="color:var(--c-red);font-weight:600;white-space:nowrap">Passou '+mcQ(-diff)+' '+mcEsc(it.unidade)+'</span>'};
+}
+
+function mcPasso2(){
+  const rests=C.restaurantes;
+  const cab=rests.map(r=>'<th style="text-align:center">'+restBadgeHtml(r.nome)+'</th>').join('');
+  const blocos=mc.forns.map((f,fi)=>{
+    if(!f.itens.length)return '';
+    const linhas=f.itens.map((it,ii)=>'<tr>'
+      +'<td style="font-size:12px">'+mcEsc(it.nome)+'</td>'
+      +'<td style="font-size:12px;white-space:nowrap">'+mcQ(mcN(it.qty))+' '+mcEsc(it.unidade)+'</td>'
+      +rests.map(r=>'<td style="text-align:center"><input type="number" min="0" step="0.5" value="'+mcEsc(it.dist[r.id]??'')+'" oninput="mcSetDist('+fi+','+ii+',\''+r.id+'\',this.value)" style="width:72px;padding:4px 8px;font-size:12px"></td>').join('')
+      +'<td style="text-align:center"><button class="btn btn-xs" onclick="mcRestante('+fi+','+ii+')" title="Coloca o que falta distribuir na loja que está vazia (só funciona se houver uma única loja vazia)">Completar</button></td>'
+      +'<td style="font-size:12px" id="mc-st-'+fi+'-'+ii+'">'+mcSituacao(it).html+'</td>'
+      +'</tr>').join('');
+    return '<div style="background:var(--c-white);border:1px solid var(--c-border);border-radius:10px;padding:12px 14px;margin-bottom:10px">'
+      +'<div style="font-size:14px;font-weight:700;color:var(--c-text);margin-bottom:8px">'+mcEsc(f.nome.trim().toUpperCase())+'</div>'
+      +'<div style="overflow-x:auto"><table class="ped-table"><thead><tr><th>Produto</th><th>Qtd. total</th>'+cab+'<th></th><th>Situação</th></tr></thead><tbody>'+linhas+'</tbody></table></div>'
+    +'</div>';
+  }).join('');
+  showModal(`
+    <div style="font-size:11px;font-weight:700;color:var(--c-accent);letter-spacing:0.06em">PASSO 2 DE 2</div>
+    <div style="font-size:16px;font-weight:600;color:var(--c-text);margin:2px 0 4px">Para qual loja vai cada item?</div>
+    <div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">Digite quanto vai para cada loja. Pode mandar tudo para uma só ou dividir.</div>
+    ${blocos}
+    <div id="mc-rest-tot" style="background:var(--c-bg);border:1px solid var(--c-border);border-radius:10px;padding:10px 14px;display:flex;gap:22px;flex-wrap:wrap;font-size:13px;color:var(--c-dim)"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--c-border);padding-top:12px;margin-top:14px">
+      <button class="btn" onclick="mcPasso1()"><i class="ti ti-arrow-left"></i> Voltar e editar a compra</button>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span id="mc-pend" style="font-size:12px"></span>
+        <button class="btn btn-acc" id="mc-criar" onclick="mcCriar()"><i class="ti ti-check"></i> Criar os pedidos</button>
+      </div>
+    </div>`,{wide:true});
+  mcResumo();
+}
+
+function mcSetDist(fi,ii,rid,v){
+  const it=mc.forns[fi]?.itens[ii];if(!it)return;
+  it.dist[rid]=v;
+  const st=document.getElementById('mc-st-'+fi+'-'+ii);if(st)st.innerHTML=mcSituacao(it).html;
+  mcResumo();
+}
+// Botão "Completar": só age por clique do usuário, e só quando há exatamente uma loja vazia
+function mcRestante(fi,ii){
+  const it=mc.forns[fi]?.itens[ii];if(!it)return;
+  const vazias=C.restaurantes.filter(r=>mcN(it.dist[r.id])<=0);
+  const falta=Math.round((mcN(it.qty)-mcDistSoma(it))*1000)/1000;
+  if(falta<=0){toast('Este item já está todo distribuído');return;}
+  if(vazias.length!==1){toast(vazias.length?'Deixe só uma loja vazia para completar, ou digite os valores':'Todas as lojas já têm quantidade');return;}
+  it.dist[vazias[0].id]=String(falta);
+  mcPasso2();
+}
+
+function mcResumo(){
+  const tot={};C.restaurantes.forEach(r=>tot[r.id]=0);
+  let falta=0,passou=0;
+  mc.forns.forEach(f=>f.itens.forEach(it=>{
+    C.restaurantes.forEach(r=>{tot[r.id]+=mcN(it.dist[r.id])*mcN(it.valor);});
+    const s=mcSituacao(it);if(s.falta)falta++;if(s.passou)passou++;
+  }));
+  const el=document.getElementById('mc-rest-tot');
+  if(el)el.innerHTML='<span>Vai virar pedidos assim:</span>'+C.restaurantes.map(r=>'<span style="display:inline-flex;align-items:center;gap:6px">'+restBadgeHtml(r.nome)+' <b style="color:var(--c-text);white-space:nowrap">'+fmt(tot[r.id])+'</b></span>').join('');
+  const p=document.getElementById('mc-pend');
+  if(p){
+    const msgs=[];
+    if(passou)msgs.push('<span style="color:var(--c-red)">'+passou+' item(ns) com mais do que a quantidade total</span>');
+    if(falta)msgs.push('<span style="color:#B54708">Ainda falta distribuir '+falta+' item(ns)</span>');
+    p.innerHTML=msgs.join(' · ')||'<span style="color:var(--c-green)">Tudo distribuído</span>';
+  }
+}
+
+async function mcCriar(){
+  if(mc.criando)return;
+  let falta=0,passou=0;
+  mc.forns.forEach(f=>f.itens.forEach(it=>{const s=mcSituacao(it);if(s.falta)falta++;if(s.passou)passou++;}));
+  if(passou){alert('Tem item com mais quantidade nas lojas do que a quantidade total. Corrija os itens marcados em vermelho.');return;}
+  // Monta os pedidos: 1 por restaurante + fornecedor
+  const grupos=[];
+  mc.forns.forEach(f=>{
+    C.restaurantes.forEach(r=>{
+      const itens=f.itens.filter(it=>mcN(it.dist[r.id])>0).map(it=>({it,qtd:mcN(it.dist[r.id])}));
+      if(itens.length)grupos.push({forn:f.nome.trim(),rest:r,itens});
+    });
+  });
+  if(!grupos.length){alert('Nenhum item foi colocado em loja ainda.');return;}
+  let msg='Serão criados '+grupos.length+' pedido(s):\n\n'+grupos.map(g=>'• '+g.rest.nome.toUpperCase()+' · '+g.forn.toUpperCase()+' ('+g.itens.length+' item(ns))').join('\n');
+  if(falta)msg+='\n\nAtenção: '+falta+' item(ns) ainda têm quantidade sem loja. Essa parte não vai entrar em nenhum pedido.';
+  if(!confirm(msg+'\n\nConfirmar?'))return;
+  mc.criando=true;
+  const btn=document.getElementById('mc-criar');if(btn){btn.disabled=true;btn.textContent='Criando...';}
+  const hoje=new Date().toISOString().slice(0,10);
+  let criados=0;const erros=[];
+  for(const g of grupos){
+    const total=g.itens.reduce((s,x)=>s+x.qtd*mcN(x.it.valor),0);
+    const {data:ped,error}=await supa.from('pedidos').insert({
+      restaurante_id:g.rest.id,semana_id:mc.semId,titulo:g.forn,data:hoje,status:'Aguardando',total,observacao:null,local_entrega:null
+    }).select().single();
+    if(error||!ped){erros.push(g.rest.nome+' / '+g.forn);continue;}
+    const {data:ins,error:e2}=await supa.from('pedido_itens').insert(g.itens.map(x=>({
+      pedido_id:ped.id,produto:x.it.nome,categoria:x.it.categoria,unidade:x.it.unidade,
+      quantidade:x.qtd,valor_unit:mcN(x.it.valor)||null,
+      previsao_entrega:null,setor:null,local_entrega:null,
+      fornecedor:g.forn,status:'Aguardando'
+    }))).select();
+    if(e2){erros.push(g.rest.nome+' / '+g.forn+' (itens)');continue;}
+    criados++;
+    const hist=(ins||[]).filter(it=>it.valor_unit>0).map(it=>({
+      produto_nome:it.produto,categoria:it.categoria,fornecedor:it.fornecedor,
+      valor_unit:it.valor_unit,unidade:it.unidade,restaurante_nome:g.rest.nome,
+      pedido_item_id:it.id
+    }));
+    if(hist.length)await supa.from('historico_precos').insert(hist);
+  }
+  mc.criando=false;
+  await reloadAll();renderPedidos();
+  if(erros.length){
+    // Mantém a compra na memória para o usuário conferir; não apaga nada sozinho
+    alert(criados+' pedido(s) criado(s). Deu erro em: \n\n• '+erros.join('\n• ')+'\n\nConfira na tela antes de tentar de novo, para não duplicar.');
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-check"></i> Criar os pedidos';}
+    return;
+  }
+  mc={semId:null,forns:[],ativo:0,cat:mc.cat,criando:false};
+  closeModal();
+  toast(criados+' pedido(s) criado(s)!',3500);
 }
 
 // ── PDF / IMAGEM ─────────────────────────────────────
