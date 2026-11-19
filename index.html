@@ -445,6 +445,11 @@ async function reloadAll(){
   C.itens_limpeza=h4.data||[];
   const sl=await supa.from('semanas_limpeza').select('*').order('data_inicio',{ascending:false});
   C.semanas_limpeza=sl.data||[];
+  // Compras montadas salvas na nuvem (Montar compra)
+  const cm=await supa.from('compras_montadas').select('*');
+  mcNuvemOk=!cm.error;
+  if(!cm.error)C.compras_montadas=cm.data||[];
+  if(mcNuvemOk&&!window._mcMigrado){window._mcMigrado=true;mcMigrarLocal();}
 }
 
 async function refreshDados(){
@@ -1451,25 +1456,82 @@ function mcEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g
 function mcN(v){const n=parseFloat(String(v==null?'':v).replace(',','.'));return isNaN(n)?0:n;}
 function mcQ(n){return String(Math.round(n*1000)/1000).replace('.',',');}
 function mcNovoForn(){return{nome:'',itens:[]};}
-// Salvamento automático no navegador (por semana). Fica neste computador/navegador.
+// Salvamento automático da compra montada (por semana).
+// Principal: na nuvem (tabela compras_montadas no Supabase), para abrir em qualquer computador.
+// Reserva: no navegador (localStorage). Uma cópia local só existe enquanto a nuvem ainda não
+// confirmou o salvamento (ou se a nuvem estiver fora do ar); depois de confirmado, a cópia local sai.
 const MC_KEY='ar_montar_compra_v1';
-function mcLerTodos(){try{return JSON.parse(localStorage.getItem(MC_KEY)||'{}')||{};}catch(e){return{};}}
+let mcNuvemOk=false;     // a tabela respondeu na última leitura
+let mcNuvemStatus='';    // '', 'nuvem', 'local'
+const mcTimers={};
+function mcLerLocal(){try{return JSON.parse(localStorage.getItem(MC_KEY)||'{}')||{};}catch(e){return{};}}
+function mcGravarLocal(all){try{localStorage.setItem(MC_KEY,JSON.stringify(all));return true;}catch(e){return false;}}
+function mcLerNuvem(){
+  const m={};
+  (C.compras_montadas||[]).forEach(r=>{if(r&&r.semana_id&&r.dados)m[r.semana_id]={...r.dados,salvoEm:r.dados.salvoEm||r.atualizado_em};});
+  return m;
+}
+// Junta nuvem + cópias locais pendentes; vale a mais recente
+function mcLerTodos(){
+  const all=mcLerNuvem();const loc=mcLerLocal();
+  Object.keys(loc).forEach(k=>{const a=all[k],b=loc[k];if(!a||((b&&b.salvoEm)||'')>((a&&a.salvoEm)||''))all[k]=b;});
+  return all;
+}
 function mcTemConteudo(){return mc.forns.some(f=>f.itens.length||f.nome.trim());}
+async function mcEnviarNuvem(k){
+  const loc=mcLerLocal();const dados=loc[k];
+  if(!dados)return;
+  const {error}=await supa.from('compras_montadas').upsert({semana_id:String(k),dados,atualizado_em:new Date().toISOString()},{onConflict:'semana_id'});
+  if(error){mcNuvemStatus='local';mcMostrarSalvo();return false;}
+  // Atualiza a lista em memória e tira a cópia local (se ninguém mexeu nela nesse meio tempo)
+  C.compras_montadas=(C.compras_montadas||[]).filter(r=>r.semana_id!==String(k));
+  C.compras_montadas.push({semana_id:String(k),dados,atualizado_em:new Date().toISOString()});
+  const agora=mcLerLocal();
+  if(agora[k]&&agora[k].salvoEm===dados.salvoEm){delete agora[k];mcGravarLocal(agora);}
+  mcNuvemStatus='nuvem';mcMostrarSalvo();
+  return true;
+}
 function mcSalvar(){
-  try{
-    const all=mcLerTodos();const k=mc.semId||'_';
-    if(mcTemConteudo()){mc.salvoEm=new Date().toISOString();all[k]={forns:mc.forns,ativo:mc.ativo,cat:mc.cat,salvoEm:mc.salvoEm};}
-    else delete all[k];
-    localStorage.setItem(MC_KEY,JSON.stringify(all));
-  }catch(e){mc.salvoEm=null;}
+  const k=String(mc.semId||'_');
+  const loc=mcLerLocal();
+  if(mcTemConteudo()){
+    mc.salvoEm=new Date().toISOString();
+    loc[k]={forns:mc.forns,ativo:mc.ativo,cat:mc.cat,salvoEm:mc.salvoEm};
+    mcGravarLocal(loc);
+    clearTimeout(mcTimers[k]);
+    mcTimers[k]=setTimeout(()=>mcEnviarNuvem(k),700);
+    if(mcNuvemStatus!=='local')mcNuvemStatus='salvando';
+  }else{
+    mcApagarSalvo(k);
+  }
   mcMostrarSalvo();
 }
-function mcApagarSalvo(semId){try{const all=mcLerTodos();delete all[semId||'_'];localStorage.setItem(MC_KEY,JSON.stringify(all));}catch(e){}}
+async function mcApagarSalvo(semId){
+  const k=String(semId||'_');
+  clearTimeout(mcTimers[k]);
+  const loc=mcLerLocal();delete loc[k];mcGravarLocal(loc);
+  C.compras_montadas=(C.compras_montadas||[]).filter(r=>r.semana_id!==k);
+  const {error}=await supa.from('compras_montadas').delete().eq('semana_id',k);
+  if(error&&mcNuvemOk)toast('Não consegui apagar a compra salva na nuvem. Tente de novo.');
+}
+// Na primeira abertura: manda para a nuvem as compras que estavam salvas só neste navegador
+async function mcMigrarLocal(){
+  if(!mcNuvemOk)return;
+  const loc=mcLerLocal();const nuvem=mcLerNuvem();
+  for(const k of Object.keys(loc)){
+    const b=loc[k];if(!b||!(b.forns||[]).some(f=>(f.itens||[]).length))continue;
+    const a=nuvem[k];
+    if(!a||(b.salvoEm||'')>(a.salvoEm||''))await mcEnviarNuvem(k);
+    else{const l2=mcLerLocal();delete l2[k];mcGravarLocal(l2);} // a da nuvem já é mais nova
+  }
+}
 function mcMostrarSalvo(){
   const el=document.getElementById('mc-salvo');if(!el)return;
   if(mc.salvoEm&&mcTemConteudo()){
     const h=new Date(mc.salvoEm).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    el.innerHTML='<i class="ti ti-device-floppy"></i> Salvo automaticamente neste computador às '+h;
+    if(mcNuvemStatus==='local')el.innerHTML='<span style="color:#B54708"><i class="ti ti-cloud-off"></i> Salvo só neste computador às '+h+' (sem conexão com a nuvem; tento de novo na próxima alteração)</span>';
+    else if(mcNuvemStatus==='salvando')el.innerHTML='<i class="ti ti-cloud-upload"></i> Salvando na nuvem...';
+    else el.innerHTML='<i class="ti ti-cloud-check"></i> Salvo na nuvem às '+h+' (abre em qualquer computador)';
   }else el.innerHTML='';
 }
 
@@ -1502,7 +1564,10 @@ function mcMudarSemana(v){
 }
 
 function openMontarCompra(semId){
-  if(mc.semId!==(semId||null))mcCarregar(semId);
+  // Recarrega se for outra semana, ou se a versão salva (ex.: de outro computador) for mais nova
+  const sv=mcLerTodos()[String(semId||'_')];
+  if(mc.semId!==(semId||null)||(sv&&(sv.salvoEm||'')>(mc.salvoEm||''))||(!sv&&mc.salvoEm))mcCarregar(semId);
+  if(!mcNuvemOk)mcNuvemStatus='local';else if(mcNuvemStatus!=='local')mcNuvemStatus='nuvem';
   if(!mc.forns.length)mc.forns=[mcNovoForn()];
   if(!mc.cat||!C.categorias.find(c=>c.nome===mc.cat))mc.cat=C.categorias[0]?.nome||'';
   mcPasso1();
