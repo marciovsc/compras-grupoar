@@ -1923,7 +1923,8 @@ async function openCotacoes(semId){
       +'<td style="font-size:12px;color:var(--c-dim);white-space:nowrap">'+ctDH(x.criado_em)+'</td>'
       +'<td style="font-size:12px">'+st+'</td>'
       +'<td style="font-size:12px;white-space:nowrap">'+k.r+' de '+k.t+' responderam</td>'
-      +'<td><button class="btn btn-xs btn-xs-acc">Abrir</button></td></tr>';
+      +'<td style="white-space:nowrap"><button class="btn btn-xs btn-xs-acc">Abrir</button> '
+      +'<button class="btn btn-xs" style="color:var(--c-red)" title="Excluir esta cotação" onclick="event.stopPropagation();ctExcluir(\''+x.id+'\',\''+semId+'\')"><i class="ti ti-trash"></i> Excluir</button></td></tr>';
   }).join(''):'<tr><td colspan="5" style="font-size:13px;color:var(--c-dim);padding:14px">Nenhuma cotação nesta semana ainda.</td></tr>';
   showModal(ctTitulo('Cotação')
     +'<div style="font-size:12px;color:var(--c-dim);margin-bottom:14px">'+(sem?semLabel(sem):'')+'</div>'
@@ -2217,8 +2218,21 @@ function ctRenderAberta(){
         +'<button class="btn" onclick="openCotacoes(\''+rodada.semana_id+'\')"><i class="ti ti-arrow-left"></i> Voltar</button>'
         +'<button class="btn" onclick="ctAbrir(\''+rodada.id+'\')" title="Buscar respostas novas"><i class="ti ti-refresh"></i> Atualizar</button>'
         +'<button class="btn" onclick="ctStatus()">'+(aberta?'<i class="ti ti-lock"></i> Fechar cotação':'<i class="ti ti-lock-open"></i> Reabrir')+'</button>'
+        +'<button class="btn" style="color:var(--c-red)" onclick="ctExcluir(\''+rodada.id+'\',\''+rodada.semana_id+'\')" title="Excluir esta cotação"><i class="ti ti-trash"></i> Excluir</button>'
         +'<button class="btn btn-acc" onclick="ctUsarNaCompra()"><i class="ti ti-basket"></i> Usar na compra</button>'
       +'</div></div>',{wide:true});
+}
+// Excluir cotação: só por clique e com confirmação. Apaga junto os itens, os links dos fornecedores e os preços dela.
+// Não mexe em pedidos já criados pelo "Usar na compra".
+async function ctExcluir(id,semId){
+  const {data:r}=await supa.from('cot_rodadas').select('titulo').eq('id',id).single();
+  const nome=r?.titulo||'Cotação';
+  if(!confirm('Excluir a cotação "'+nome+'"?\n\nOs preços recebidos nela serão apagados e os links enviados aos fornecedores param de funcionar. Os pedidos que você já criou não mudam.\n\nEssa ação não pode ser desfeita.'))return;
+  const {error}=await supa.from('cot_rodadas').delete().eq('id',id);
+  if(error){toast('Erro ao excluir: '+error.message,4000);return;}
+  if(ctAb&&ctAb.rodada&&ctAb.rodada.id===id)ctAb=null;
+  toast('Cotação "'+nome+'" excluída');
+  openCotacoes(semId);
 }
 function ctCopiar(cvId,btn){
   const cv=ctAb.convites.find(x=>x.id===cvId);if(!cv)return;
