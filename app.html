@@ -2464,9 +2464,23 @@ async function ctSalvarCadastro(i,campo,el){
   const p=C.produtos.find(x=>x.id===it.pid);if(!p||p[campo]===v)return;
   const {error}=await supa.from('produtos').update({[campo]:v}).eq('id',it.pid);
   if(error){toast('Erro ao atualizar o cadastro: '+error.message,4000);return;}
+  const antigo=p.nome;
   C.produtos=C.produtos.map(x=>x.id===it.pid?{...x,[campo]:v}:x);
   toast((campo==='nome'?'Nome':'Unidade')+' atualizado no cadastro do produto');
   ctFiltrar();
+  if(campo==='nome')await ctLevarHistorico(antigo,v);
+}
+// Ao renomear um produto, pergunta se leva o histórico de preços do nome antigo para o novo (só se o usuário confirmar)
+async function ctLevarHistorico(antigo,novo){
+  const doAntigo=(C.historico_precos||[]).filter(h=>h.produto_nome===antigo&&h.restaurante_nome!=='Limpeza');
+  if(!doAntigo.length||antigo===novo)return;
+  const ult=doAntigo.slice().sort((a,b)=>new Date(b.registrado_em)-new Date(a.registrado_em))[0];
+  const d=new Date(ult.registrado_em).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+  if(!confirm('"'+antigo+'" tem histórico de preços (último: '+fmtNum(ult.valor_unit)+' · '+(ult.fornecedor||'')+' · '+d+').\n\nLevar esse histórico para o nome novo "'+novo+'"?'))return;
+  const {error}=await supa.from('historico_precos').update({produto_nome:novo}).eq('produto_nome',antigo).or('restaurante_nome.is.null,restaurante_nome.neq.Limpeza');
+  if(error){toast('Erro ao levar o histórico de preços: '+error.message,4000);return;}
+  C.historico_precos=(C.historico_precos||[]).map(h=>h.produto_nome===antigo&&h.restaurante_nome!=='Limpeza'?{...h,produto_nome:novo}:h);
+  toast('Histórico de preços levado para "'+novo+'"');
 }
 function ctRemItem(i){ct.itens.splice(i,1);ctRenderItens();ctFiltrar();}
 function ctSetModo(i,v){if(!ct.itens[i])return;ct.itens[i].modo=v;ctRenderItens();}
