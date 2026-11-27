@@ -2414,8 +2414,8 @@ function ctRenderItens(){
       if(it.modo!=='cotar'&&ctNorm(fixoProd)!==ctNorm(it.modo))fixar='<button class="btn btn-xs" onclick="ctFixar('+i+')" title="Guardar este fornecedor como fixo do produto, para as próximas vezes">Guardar como fixo</button>';
       else if(fixoProd)fixar='<button class="btn btn-xs" onclick="ctDesfixar('+i+')" title="Este produto tem fornecedor fixo: '+mcEsc(fixoProd)+'. Clique para tirar.">Tirar fixo do produto</button>';
       return '<tr>'
-        +'<td><input type="text" value="'+mcEsc(it.nome)+'" oninput="ct.itens['+i+'].nome=this.value" title="Muda o nome só nesta cotação. No cadastro: '+mcEsc(p?.nome||it.nome)+'" style="width:100%;min-width:180px;padding:4px 8px;font-size:12px"></td>'
-        +'<td><input type="text" value="'+mcEsc(it.unidade)+'" oninput="ct.itens['+i+'].unidade=this.value" title="Muda a unidade só nesta cotação. No cadastro: '+mcEsc(p?.unidade||it.unidade)+'" style="width:64px;padding:4px 8px;font-size:12px"></td>'
+        +'<td><input type="text" value="'+mcEsc(it.nome)+'" oninput="ct.itens['+i+'].nome=this.value" onchange="ctSalvarCadastro('+i+',\'nome\',this)" title="Ao sair do campo, o nome também é atualizado no cadastro do produto" style="width:100%;min-width:180px;padding:4px 8px;font-size:12px"></td>'
+        +'<td><input type="text" value="'+mcEsc(it.unidade)+'" oninput="ct.itens['+i+'].unidade=this.value" onchange="ctSalvarCadastro('+i+',\'unidade\',this)" title="Ao sair do campo, a unidade também é atualizada no cadastro do produto" style="width:64px;padding:4px 8px;font-size:12px"></td>'
         +'<td><input type="number" min="0" step="0.5" value="'+mcEsc(it.qty)+'" onchange="ct.itens['+i+'].qty=this.value;ctResumo()" style="width:80px;padding:4px 8px;font-size:12px"></td>'
         +'<td><select onchange="ctSetModo('+i+',this.value)" style="width:auto;min-width:170px;padding:4px 8px;font-size:12px;font-weight:600;color:'+(it.modo==='cotar'?'var(--c-orange)':'var(--c-green)')+'">'+ctOpcoesForn(it.modo)+'</select></td>'
         +'<td>'+fixar+'</td>'
@@ -2454,6 +2454,19 @@ function ctToggleProd(pid){
   else{const p=C.produtos.find(x=>x.id===pid);if(!p)return;
     ct.itens.push({pid:p.id,nome:p.nome,unidade:p.unidade,categoria:p.categoria,qty:'',modo:p.fornecedor_fixo?p.fornecedor_fixo:'cotar'});}
   ctRenderItens();
+}
+// Nome/unidade editados na Nova cotação: grava também no cadastro do produto (só quando o usuário edita o campo)
+async function ctSalvarCadastro(i,campo,el){
+  const it=ct.itens[i];if(!it)return;
+  const v=(el.value||'').trim();
+  if(!v){toast(campo==='nome'?'O nome não pode ficar em branco':'A unidade não pode ficar em branco',3000);return;}
+  it[campo]=v;el.value=v;
+  const p=C.produtos.find(x=>x.id===it.pid);if(!p||p[campo]===v)return;
+  const {error}=await supa.from('produtos').update({[campo]:v}).eq('id',it.pid);
+  if(error){toast('Erro ao atualizar o cadastro: '+error.message,4000);return;}
+  C.produtos=C.produtos.map(x=>x.id===it.pid?{...x,[campo]:v}:x);
+  toast((campo==='nome'?'Nome':'Unidade')+' atualizado no cadastro do produto');
+  ctFiltrar();
 }
 function ctRemItem(i){ct.itens.splice(i,1);ctRenderItens();ctFiltrar();}
 function ctSetModo(i,v){if(!ct.itens[i])return;ct.itens[i].modo=v;ctRenderItens();}
