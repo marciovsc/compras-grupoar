@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     :root{
@@ -3541,39 +3542,172 @@ function _gerarRelatorioFinanceiro(semIds){
   abrirEspelhoModal(html,'Relatório Financeiro ('+dataArquivo()+')');
 }
 
+function ehCelular(){
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)||(navigator.maxTouchPoints>1&&/Mac/.test(navigator.platform||''));
+}
+let _espelhoAtual={html:'',titulo:''};
 function abrirEspelhoModal(html, titulo){
+  _espelhoAtual={html:html,titulo:titulo};
   let ov=document.getElementById('espelho-ov');
   if(!ov){
     ov=document.createElement('div');
     ov.id='espelho-ov';
     ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;flex-direction:column';
     const bar=document.createElement('div');
-    bar.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#18181A;border-bottom:1px solid #333';
+    bar.style.cssText='display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 16px;background:#18181A;border-bottom:1px solid #333';
     const tit=document.createElement('span');
     tit.id='espelho-titulo';
-    tit.style.cssText='color:#EF9F27;font-weight:600;font-size:14px';
+    tit.style.cssText='color:#EF9F27;font-weight:600;font-size:14px;flex:1 1 180px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    const estiloBtn='border:none;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer;font-size:13px;margin-left:6px';
+    const btnPdf=document.createElement('button');
+    btnPdf.id='espelho-btn-pdf';
+    btnPdf.textContent='Baixar PDF';
+    btnPdf.style.cssText='background:#EF9F27;color:#18181A;'+estiloBtn;
+    btnPdf.onclick=function(){baixarEspelhoPDF();};
     const btnPrint=document.createElement('button');
     btnPrint.textContent='Imprimir';
-    btnPrint.style.cssText='background:#EF9F27;color:#18181A;border:none;border-radius:6px;padding:6px 14px;font-weight:600;cursor:pointer;font-size:13px;margin-right:8px';
-    btnPrint.onclick=function(){document.getElementById('espelho-iframe').contentWindow.print();};
+    btnPrint.style.cssText='background:#F0F1F5;color:#18181A;'+estiloBtn;
+    btnPrint.onclick=function(){imprimirEspelho();};
     const btnClose=document.createElement('button');
     btnClose.textContent='Fechar';
-    btnClose.style.cssText='background:#333;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px';
+    btnClose.style.cssText='background:#333;color:#fff;'+estiloBtn;
     btnClose.onclick=function(){ov.remove();};
+    // No celular (principalmente iPhone) o quadro interno só rola se estiver dentro de uma caixa com rolagem própria
+    const caixa=document.createElement('div');
+    caixa.style.cssText='flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;background:#fff';
     const fr=document.createElement('iframe');
     fr.id='espelho-iframe';
-    fr.style.cssText='flex:1;border:none;background:#fff;width:100%;height:100%';
+    fr.style.cssText='display:block;border:none;background:#fff;width:100%;height:100%';
+    caixa.appendChild(fr);
     bar.appendChild(tit);
     const btns=document.createElement('div');
+    btns.style.cssText='display:flex;flex-wrap:wrap;gap:6px 0';
+    btns.appendChild(btnPdf);
     btns.appendChild(btnPrint);
     btns.appendChild(btnClose);
     bar.appendChild(btns);
     ov.appendChild(bar);
-    ov.appendChild(fr);
+    ov.appendChild(caixa);
     document.body.appendChild(ov);
   }
   document.getElementById('espelho-titulo').textContent=titulo;
   document.getElementById('espelho-iframe').srcdoc=html;
+}
+
+// Imprimir: no computador usa o quadro; no celular abre o relatório numa aba própria
+// (o iPhone/Android não imprime direito o conteúdo de um quadro interno)
+function imprimirEspelho(){
+  const html=_espelhoAtual.html;
+  if(!ehCelular()){
+    document.getElementById('espelho-iframe').contentWindow.print();
+    return;
+  }
+  const comPrint=html.replace(/<\/body>/i,'<script>window.onload=function(){setTimeout(function(){window.print();},400);};<\/script></body>');
+  const url=URL.createObjectURL(new Blob([comPrint],{type:'text/html'}));
+  const w=window.open(url,'_blank');
+  if(!w){toast('O navegador bloqueou a nova aba. Use "Baixar PDF".');}
+  setTimeout(function(){URL.revokeObjectURL(url);},60000);
+}
+
+// Baixar PDF: monta o arquivo PDF direto no navegador (funciona no celular, sem precisar imprimir)
+let _gerandoPdf=false;
+async function baixarEspelhoPDF(){
+  if(_gerandoPdf)return;
+  if(!window.jspdf||!window.html2canvas){toast('Não foi possível carregar o gerador de PDF. Verifique a internet.');return;}
+  const btn=document.getElementById('espelho-btn-pdf');
+  const html=_espelhoAtual.html;
+  const nome=(_espelhoAtual.titulo||'relatorio').replace(/[\\\/:*?"<>|]+/g,'-').replace(/\s+/g,' ').trim()+'.pdf';
+  const paisagem=/size:\s*A4\s+landscape/i.test(html);
+  const pagW=paisagem?297:210, pagH=paisagem?210:297, margem=8;
+  const larguraMm=pagW-margem*2, alturaMm=pagH-margem*2;
+  const larguraPx=paisagem?1120:800;
+  const pxPorMm=larguraPx/larguraMm;
+  const alturaPagPx=Math.floor(alturaMm*pxPorMm);
+  _gerandoPdf=true;
+  if(btn){btn.textContent='Gerando PDF...';btn.disabled=true;}
+  const fr=document.createElement('iframe');
+  fr.style.cssText='position:fixed;top:0;left:-20000px;width:'+larguraPx+'px;height:1000px;border:none;visibility:hidden';
+  document.body.appendChild(fr);
+  try{
+    const ajuste='<style>.no-print{display:none!important}html,body{background:#fff!important;margin:0!important;padding:0!important}</style>';
+    await new Promise(function(res){
+      fr.onload=res;
+      fr.srcdoc=html.replace(/<\/head>/i,ajuste+'</head>');
+    });
+    const d=fr.contentDocument;
+    try{if(d.fonts&&d.fonts.ready)await d.fonts.ready;}catch(e){}
+    await Promise.all([...d.images].map(function(img){return img.complete?null:new Promise(function(r){img.onload=img.onerror=r;});}));
+    let altTotal=Math.ceil(d.documentElement.scrollHeight);
+    fr.style.height=altTotal+'px';
+    await new Promise(function(r){setTimeout(r,80);});
+    altTotal=Math.ceil(d.documentElement.scrollHeight);
+    const topo=function(el){return el.getBoundingClientRect().top;};
+    const base=function(el){return el.getBoundingClientRect().bottom;};
+
+    // Pontos onde a página pode ser cortada: começo de cada linha de tabela e de cada bloco
+    const cortes=[];
+    d.querySelectorAll('tr').forEach(function(tr){
+      if(tr.parentElement&&tr.parentElement.tagName==='THEAD')return;
+      const ant=tr.previousElementSibling;
+      // não deixar cabeçalho de grupo (ex.: nome do fornecedor) sozinho no fim da página
+      const antEhGrupo=ant&&ant.cells&&ant.cells.length===1&&ant.cells[0].colSpan>=3;
+      if(!antEhGrupo)cortes.push(topo(tr));
+    });
+    d.querySelectorAll('body > *, .page > *, .rest-section > *').forEach(function(el){cortes.push(topo(el));});
+    cortes.sort(function(a,b){return a-b;});
+
+    // Tabelas com cabeçalho: o cabeçalho se repete no topo de cada página
+    const tabelas=[...d.querySelectorAll('table')].filter(function(t){return t.tHead;}).map(function(t){
+      return {ini:base(t.tHead),fim:base(t),thIni:topo(t.tHead),thAlt:base(t.tHead)-topo(t.tHead),img:null};
+    });
+
+    const opc={scale:2,useCORS:true,backgroundColor:'#ffffff',windowWidth:larguraPx,windowHeight:altTotal,scrollX:0,scrollY:0,logging:false};
+    const foto=function(y,h){return html2canvas(d.documentElement,Object.assign({},opc,{x:0,y:y,width:larguraPx,height:Math.max(1,Math.ceil(h))}));};
+
+    const paginas=[];
+    let y=0;
+    while(y<altTotal-2){
+      const tab=tabelas.find(function(t){return y>t.ini+1&&y<t.fim-2;});
+      const disp=alturaPagPx-(tab?tab.thAlt:0);
+      const limite=y+disp;
+      if(limite>=altTotal){paginas.push({y:y,h:altTotal-y,tab:tab});break;}
+      let corte=null;
+      for(const c of cortes){if(c>y+disp*0.25&&c<=limite)corte=c;}
+      if(corte===null)corte=limite;
+      paginas.push({y:y,h:corte-y,tab:tab});
+      y=corte;
+    }
+
+    const {jsPDF}=window.jspdf;
+    const pdf=new jsPDF({orientation:paisagem?'landscape':'portrait',unit:'mm',format:'a4'});
+    for(let i=0;i<paginas.length;i++){
+      const p=paginas[i];
+      if(btn)btn.textContent='Gerando PDF... '+(i+1)+'/'+paginas.length;
+      if(i>0)pdf.addPage();
+      let yMm=margem;
+      if(p.tab){
+        if(!p.tab.img)p.tab.img=(await foto(p.tab.thIni,p.tab.thAlt)).toDataURL('image/jpeg',0.92);
+        pdf.addImage(p.tab.img,'JPEG',margem,yMm,larguraMm,p.tab.thAlt/pxPorMm);
+        yMm+=p.tab.thAlt/pxPorMm;
+      }
+      const cv=await foto(p.y,p.h);
+      pdf.addImage(cv.toDataURL('image/jpeg',0.92),'JPEG',margem,yMm,larguraMm,p.h/pxPorMm);
+    }
+    const blob=pdf.output('blob');
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=nome;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(url);},60000);
+    toast('PDF baixado: '+nome);
+  }catch(e){
+    console.error(e);
+    toast('Erro ao gerar o PDF');
+  }finally{
+    fr.remove();
+    _gerandoPdf=false;
+    if(btn){btn.textContent='Baixar PDF';btn.disabled=false;}
+  }
 }
 
 
